@@ -183,6 +183,20 @@ model Rendition {
   @@unique([assetId, purpose])
 }
 
+/// The durable copy of every media file (originals and renditions), keyed by
+/// the same path the disk cache and the public URL use. In the database
+/// rather than Shipyard's storage-api: on a newly provisioned site that
+/// service cannot act as service_role (src/lib/media-store.ts), and Postgres
+/// is already backed up nightly. Files are small by construction — originals
+/// are re-encoded at ingest, renditions are ≤ 1080 px JPEGs.
+model MediaObject {
+  key       String   @id
+  mime      String
+  size      Int
+  bytes     Bytes
+  createdAt DateTime @default(now())
+}
+
 // ---------- Posts ----------
 
 model Post {

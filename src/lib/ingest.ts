@@ -48,8 +48,19 @@ export async function saveAsset(
   const existing = await db.asset.findUnique({ where: { brandId_sha256: { brandId: brand.id, sha256 } } });
   if (existing) return { asset: existing, duplicate: true };
 
-  const originalKey = `o/${brand.slug}/${token()}.${ext}`;
-  await writeMedia(originalKey, bytes);
+  // The kept "original" is a working master, not the upload byte-for-byte:
+  // fitted inside 2160x3840 (twice every rendition, so nothing is lost) and
+  // re-encoded as WebP with alpha kept, so a 20 MB PNG master costs ~1-2 MB
+  // in the database. Aspect ratio is unchanged, so the 4:5 / 9:16 checks and
+  // pad/crop decisions are exactly what they would be on the upload.
+  const master = await sharp(bytes)
+    .rotate()
+    .resize({ width: 2160, height: 3840, fit: "inside", withoutEnlargement: true })
+    .webp({ quality: 92, alphaQuality: 100 })
+    .toBuffer({ resolveWithObject: true });
+
+  const originalKey = `o/${brand.slug}/${token()}.webp`;
+  await writeMedia(originalKey, master.data);
 
   const asset = await db.asset.create({
     data: {
@@ -58,8 +69,8 @@ export async function saveAsset(
       originalName: originalName.slice(0, 200) || `upload.${ext}`,
       mime,
       bytes: bytes.byteLength,
-      width: meta.width,
-      height: meta.height,
+      width: master.info.width,
+      height: master.info.height,
       sha256,
       source,
     },

@@ -109,3 +109,17 @@ describe("captions from forms", () => {
     expect(edited.caption).toBe("A\nB");
   });
 });
+
+describe("media durability", () => {
+  it("serves a file from Postgres after the container's disk copy is gone", async () => {
+    const { readMedia, writeMedia, PUBLIC_DIR } = await import("@/lib/media-store");
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const key = `m/test/${Math.random().toString(36).slice(2)}/feed_4x5.jpg`;
+    const bytes = await sharp({ create: { width: 10, height: 10, channels: 3, background: "#ff0000" } }).jpeg().toBuffer();
+    await writeMedia(key, bytes);
+    await fs.rm(path.join(PUBLIC_DIR, ...key.split("/")));
+    expect(Buffer.compare((await readMedia(key))!, bytes)).toBe(0);
+    expect(await readMedia("m/test/missing/feed_4x5.jpg")).toBeNull();
+  });
+});

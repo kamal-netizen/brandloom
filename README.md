@@ -94,7 +94,7 @@ Add `--json` for machine-readable output.
    (port 3000, branch `main`).
 2. Provision the backend with direct DB access (injects `DATABASE_URL`, `DIRECT_URL`,
    `SUPABASE_SERVICE_ROLE_KEY`).
-3. Env vars: `MEDIA_STORAGE_URL=http://sb-storage-brandloom:5000`, `BETTER_AUTH_SECRET`,
+3. Env vars (media is stored in Postgres; leave `MEDIA_STORAGE_URL` unset): `BETTER_AUTH_SECRET`,
    `BETTER_AUTH_URL`, `NEXT_PUBLIC_SITE_URL` and `PUBLIC_BASE_URL` (all
    `https://brandloom.srv1867587.hstgr.cloud`), `ALLOWED_SIGNUP_EMAILS`,
    `TOKEN_ENCRYPTION_KEY` (keep an off-box copy), `SCHEDULER_SECRET`, `META_GRAPH_VERSION`.

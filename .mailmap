@@ -1,0 +1,9 @@
+# Every identity below is the same person: Mazhar Rony.
+# The variants are historical git config differences across machines and
+# two GitHub accounts, not separate contributors.
+#
+# git honours this file (log, shortlog, blame). GitHub does NOT - its
+# contributor list is built from the commit author's email address.
+
+Mazhar Rony <ronymazhar75@gmail.com>
+Mazhar Rony <ronymazhar75@gmail.com> Mazhar rony <ronymazhar75@gmail.com>

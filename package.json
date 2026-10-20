@@ -1,0 +1,52 @@
+{
+  "name": "brandloom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Social media manager for the Core Champs / JNK / Muscle Rulz / Scoops Monster / ProScience Instagram accounts",
+  "author": "Mazhar Rony",
+  "bin": {
+    "brandloom": "bin/brandloom.mjs"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "prisma migrate deploy && exec node scripts/boot.mjs",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
+    "postinstall": "prisma generate",
+    "db:deploy": "prisma migrate deploy",
+    "db:dev": "powershell -ExecutionPolicy Bypass -File scripts/dev-db.ps1",
+    "make-admin": "tsx scripts/make-admin.ts"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@prisma/client": "^6.19.3",
+    "better-auth": "^1.6.23",
+    "clsx": "^2.1.1",
+    "next": "16.3.8",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "sharp": "^0.34.5",
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^17.2.3",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "prisma": "^6.19.3",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.1",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

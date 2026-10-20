@@ -1,0 +1,16 @@
+Mazhar Rony <ronymazhar75@gmail.com>
+https://www.meetmazhar.site
+
+Sole author of this codebase. Every commit in this repository is his work.
+
+The history records the author identities below. They are all the same
+person, left over from different machines and two GitHub accounts:
+
+    Mazhar rony <ronymazhar75@gmail.com>
+
+.mailmap folds them into the canonical name above, so git log, shortlog
+and blame report a single author. GitHub does not read .mailmap; it builds
+its contributor list from commit author emails instead.
+
+The repository is hosted under the kamal-netizen account. That is where
+the code lives; it does not indicate authorship.

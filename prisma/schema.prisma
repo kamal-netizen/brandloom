@@ -1,0 +1,280 @@
+// Brandloom schema.
+// PostgreSQL (Shipyard). Same conventions as the shop apps: no enums / Json
+// types — status fields are validated strings (see src/lib/status.ts), which
+// keeps migrations cheap when a state is added.
+//
+// All timestamps are UTC. The app is operated in Asia/Dubai (UTC+4, no DST);
+// conversion happens at the edges (src/lib/time.ts), never in the database.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------- Auth (Better Auth core schema + role) ----------
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  role          String   @default("VIEWER") // VIEWER | ADMIN
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions  Session[]
+  accounts  Account[]
+  apiTokens ApiToken[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ---------- Brands ----------
+
+model Brand {
+  id             String   @id @default(cuid())
+  slug           String   @unique // corechamps | jnk | musclerulz | scoopsmonster | proscience
+  name           String
+  igHandle       String? // without the @
+  website        String?
+  primaryColor   String   @default("#111111")
+  secondaryColor String   @default("#ffffff")
+  accentColor    String   @default("#888888")
+  logoAssetId    String?
+  voiceNotes     String   @default("") // tone/claims rules for whoever writes captions
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  hashtagSets HashtagSet[]
+  connection  IgConnection?
+  assets      Asset[]
+  posts       Post[]
+}
+
+model HashtagSet {
+  id        String   @id @default(cuid())
+  brandId   String
+  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name      String
+  tags      String // space-separated, each starting with #
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([brandId, name])
+}
+
+/// One Instagram professional account per brand, reached through its Facebook Page.
+model IgConnection {
+  id                  String    @id @default(cuid())
+  brandId             String    @unique
+  brand               Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  igUserId            String
+  igUsername          String
+  igProfilePicUrl     String?
+  fbPageId            String
+  fbPageName          String
+  pageTokenEnc        String // AES-256-GCM, src/lib/crypto.ts
+  userTokenExpiresAt  DateTime?
+  dataAccessExpiresAt DateTime?
+  scopes              String    @default("")
+  status              String    @default("CONNECTED") // CONNECTED | NEEDS_RECONNECT | DISCONNECTED
+  lastCheckedAt       DateTime?
+  lastError           String?
+  connectedByUserId   String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// ---------- Media ----------
+
+model Asset {
+  id           String   @id @default(cuid())
+  brandId      String
+  brand        Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  kind         String   @default("IMAGE") // IMAGE | VIDEO | LOGO
+  originalKey  String // storage key of the uploaded original
+  originalName String
+  mime         String
+  bytes        Int
+  width        Int
+  height       Int
+  sha256       String
+  tags         String   @default("")
+  source       String   @default("UI") // UI | API
+  createdAt    DateTime @default(now())
+
+  renditions Rendition[]
+  postMedia  PostMedia[]
+
+  @@unique([brandId, sha256])
+  @@index([brandId, createdAt])
+}
+
+/// Instagram-ready JPEGs. `key` is also the public URL path (/m/...), with an
+/// unguessable segment, because Meta must fetch it anonymously.
+model Rendition {
+  id      String @id @default(cuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  purpose String // FEED_4x5 | STORY_9x16 | THUMB
+  key     String @unique
+  width   Int
+  height  Int
+  bytes   Int
+  fit     String @default("exact") // exact | crop | pad
+
+  postMedia PostMedia[]
+
+  @@unique([assetId, purpose])
+}
+
+// ---------- Posts ----------
+
+model Post {
+  id               String    @id @default(cuid())
+  brandId          String
+  brand            Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  type             String // FEED | STORY | REEL | CAROUSEL
+  status           String    @default("DRAFT") // see src/lib/status.ts
+  caption          String    @default("")
+  scheduledAt      DateTime?
+  publishOnApprove Boolean   @default(false)
+  source           String    @default("UI") // UI | API
+  externalRef      String? // idempotency key from the API / CLI
+  createdByUserId  String?
+  createdByTokenId String?
+  approvedByUserId String?
+  approvedAt       DateTime?
+  rejectNote       String?
+
+  // Publisher step machine (src/lib/publish/engine.ts). Each step is saved
+  // before the next Graph call, so a crash resumes instead of repeating.
+  publishStep   String    @default("NONE") // NONE | CONTAINER_CREATED | CONTAINER_READY | PUBLISH_CALLED | DONE
+  igContainerId String?
+  igMediaId     String?
+  igPermalink   String?
+  publishedAt   DateTime?
+  lockedAt      DateTime?
+  lockedBy      String?
+  attemptCount  Int       @default(0)
+  nextAttemptAt DateTime?
+  lastError     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  media    PostMedia[]
+  attempts PublishAttempt[]
+
+  @@unique([brandId, externalRef])
+  @@index([status, scheduledAt])
+  @@index([brandId, scheduledAt])
+}
+
+model PostMedia {
+  id          String    @id @default(cuid())
+  postId      String
+  post        Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  assetId     String
+  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  renditionId String
+  rendition   Rendition @relation(fields: [renditionId], references: [id], onDelete: Restrict)
+  position    Int       @default(0)
+
+  @@index([postId])
+}
+
+/// Audit trail: one row per Graph API step call.
+model PublishAttempt {
+  id            String    @id @default(cuid())
+  postId        String
+  post          Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  instance      String
+  step          String
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  ok            Boolean   @default(false)
+  httpStatus    Int?
+  igErrorCode   Int?
+  error         String?
+  igContainerId String?
+
+  @@index([postId, startedAt])
+}
+
+// ---------- Automation ----------
+
+model ApiToken {
+  id              String    @id @default(cuid())
+  name            String
+  prefix          String // first characters, shown in the UI to tell tokens apart
+  hash            String    @unique // sha256 of the full token
+  scopes          String // comma-separated, see src/lib/api-auth.ts
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+  createdByUserId String
+  createdBy       User      @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  createdAt       DateTime  @default(now())
+}
+
+model SchedulerHeartbeat {
+  id         String   @id // "main"
+  lastTickAt DateTime
+  lastTickBy String
+  lastResult String   @default("")
+}

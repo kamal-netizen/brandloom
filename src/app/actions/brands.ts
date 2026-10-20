@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { db } from "@/lib/db";
 import { assertAdmin } from "@/lib/admin";
-import { normaliseTags } from "@/lib/caption";
+import { brandRuleViolations, normaliseTags } from "@/lib/caption";
 import { bindPage, ConnectError, openPick, PICK_COOKIE } from "@/lib/meta/connections";
 import { pagesWithInstagram } from "@/lib/meta/oauth";
 import { GraphError } from "@/lib/meta/graph";
@@ -45,6 +45,8 @@ export async function saveHashtagSetAction(f: FormData) {
   const name = str(f, "name").toLowerCase().replace(/[^a-z0-9-_ ]/g, "").slice(0, 40);
   const tags = normaliseTags(str(f, "tags"));
   if (!name || !tags) redirect(`/brands/${slug}?error=${encodeURIComponent("A set needs a name and at least one tag.")}`);
+  const bad = brandRuleViolations(tags, brand.blockedTerms);
+  if (bad.length) redirect(`/brands/${slug}?error=${encodeURIComponent(`${brand.name} is an international brand: no ${bad.join(", ")} in its hashtags.`)}#hashtags`);
   const isDefault = str(f, "isDefault") === "on";
   if (isDefault) await db.hashtagSet.updateMany({ where: { brandId: brand.id }, data: { isDefault: false } });
   await db.hashtagSet.upsert({

@@ -64,3 +64,28 @@ export function appendHashtags(caption: string, tags: string): string {
   const base = caption.replace(/\s+$/, "");
   return base ? `${base}\n\n${extra.join(" ")}` : extra.join(" ");
 }
+
+const ARABIC_SCRIPT = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u;
+
+/**
+ * Brand rules on caption content (Brand.blockedTerms). International brands
+ * block UAE / Gulf references, AED and Arabic script; JNK Nutrition, a UAE
+ * company, blocks nothing. A term matches as a whole word, a hashtag
+ * (#uae, #fitnessuae when listed) or with spaces (abu dhabi), case-insensitive.
+ */
+export function brandRuleViolations(text: string, blockedTerms: string): string[] {
+  const terms = blockedTerms
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  const found: string[] = [];
+  for (const term of terms) {
+    if (term === "arabic-script") {
+      if (ARABIC_SCRIPT.test(text)) found.push("Arabic text");
+      continue;
+    }
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    if (new RegExp(`(^|[^\\p{L}\\p{N}_])#?${escaped}(?=$|[^\\p{L}\\p{N}_])`, "iu").test(text)) found.push(term);
+  }
+  return found;
+}

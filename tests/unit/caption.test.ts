@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendHashtags, captionLength, checkCaption, hashtagsIn, mentionsIn, normaliseTags } from "@/lib/caption";
+import { appendHashtags, brandRuleViolations, captionLength, checkCaption, hashtagsIn, mentionsIn, normaliseTags } from "@/lib/caption";
 
 describe("caption limits", () => {
   it("accepts a normal caption", () => {
@@ -37,5 +37,24 @@ describe("hashtag sets", () => {
     expect(appendHashtags("New flavour! #whey", "#whey #gym")).toBe("New flavour! #whey\n\n#gym");
     expect(appendHashtags("Done #gym", "#GYM")).toBe("Done #gym");
     expect(appendHashtags("", "#a #b")).toBe("#a #b");
+  });
+});
+
+describe("brand rules", () => {
+  const intl = "uae,dubai,abu dhabi,aed,fitnessuae,arabic-script";
+  it("blocks UAE references, AED and Arabic for international brands", () => {
+    expect(brandRuleViolations("Fuel up #gym #uae", intl)).toEqual(["uae"]);
+    expect(brandRuleViolations("Now in Dubai!", intl)).toEqual(["dubai"]);
+    expect(brandRuleViolations("Shipping to Abu  Dhabi", intl)).toEqual(["abu dhabi"]);
+    expect(brandRuleViolations("Only 199 AED", intl)).toEqual(["aed"]);
+    expect(brandRuleViolations("#FitnessUAE", intl)).toEqual(["fitnessuae"]);
+    expect(brandRuleViolations("بروتين", intl)).toEqual(["Arabic text"]);
+  });
+  it("does not trip on words that merely contain a term", () => {
+    expect(brandRuleViolations("Made in a GMP facility, prepared daily, #suaeda", intl)).toEqual([]);
+    expect(brandRuleViolations("TRAIN. FIGHT. WIN. #musclerulz", intl)).toEqual([]);
+  });
+  it("blocks nothing for JNK (no terms)", () => {
+    expect(brandRuleViolations("#uae #dubai جنك", "")).toEqual([]);
   });
 });

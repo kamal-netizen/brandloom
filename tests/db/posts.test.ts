@@ -123,3 +123,20 @@ describe("media durability", () => {
     expect(await readMedia("m/test/missing/feed_4x5.jpg")).toBeNull();
   });
 });
+
+describe("international brand rule", () => {
+  it("refuses UAE references for international brands and allows them for JNK", async () => {
+    const intl = await brandWithConnection("musclerulz");
+    await db.brand.update({ where: { id: intl.id }, data: { blockedTerms: "uae,dubai,arabic-script" } });
+    const brand = await db.brand.findUniqueOrThrow({ where: { id: intl.id } });
+    const asset = await poster(brand);
+    await expect(
+      createPost({ brand, type: "FEED", caption: "Mango 🥭 #gym #uae", assetIds: [asset.id], scheduledAt: soon(), source: "API", canApprove: false })
+    ).rejects.toMatchObject({ code: "brand_rule" });
+
+    const jnk = await brandWithConnection("jnk");
+    const jnkAsset = await poster(jnk);
+    const { post } = await createPost({ brand: jnk, type: "FEED", caption: "In stock in Dubai #uae", assetIds: [jnkAsset.id], scheduledAt: soon(), source: "API", canApprove: false });
+    expect(post.status).toBe("PENDING_APPROVAL");
+  });
+});

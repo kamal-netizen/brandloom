@@ -1,6 +1,6 @@
 import type { Brand, Post } from "@prisma/client";
 import { db } from "@/lib/db";
-import { appendHashtags, checkCaption } from "@/lib/caption";
+import { appendHashtags, brandRuleViolations, checkCaption } from "@/lib/caption";
 import { ensureRendition, IngestError } from "@/lib/ingest";
 import { purposeFor, type Fit } from "@/lib/renditions";
 import { CANCELLABLE, EDITABLE, type Platform, type PostStatus, type PostType } from "@/lib/status";
@@ -57,6 +57,13 @@ export async function resolveCaption(brandId: string, rawCaption: string, hashta
   return appendHashtags(caption, set.tags);
 }
 
+function assertBrandRules(brand: Pick<Brand, "name" | "blockedTerms">, caption: string) {
+  const bad = brandRuleViolations(caption, brand.blockedTerms);
+  if (bad.length) {
+    throw new PostError(`${brand.name} is an international brand: the caption may not mention ${bad.join(", ")}.`, 400, "brand_rule");
+  }
+}
+
 function assertFuture(at: Date) {
   if (at.getTime() < Date.now() + MIN_LEAD_MS) throw new PostError("Scheduled time must be at least 2 minutes from now.");
 }
@@ -72,6 +79,7 @@ export async function createPost(input: CreatePostInput): Promise<{ post: Post; 
   const caption = await resolveCaption(brand.id, input.caption ?? "", input.hashtagSet);
   const check = checkCaption(caption);
   if (!check.ok) throw new PostError(check.errors.join(" "), 400, "caption");
+  assertBrandRules(brand, caption);
 
   const desired = input.desired ?? (input.source === "UI" ? "draft" : "pending");
   let status: PostStatus;
@@ -216,6 +224,8 @@ export async function editPost(
   if (changes.caption !== undefined && changes.caption !== post.caption) {
     const check = checkCaption(changes.caption);
     if (!check.ok) throw new PostError(check.errors.join(" "), 400, "caption");
+    const brand = await db.brand.findUniqueOrThrow({ where: { id: post.brandId }, select: { name: true, blockedTerms: true } });
+    assertBrandRules(brand, changes.caption);
     data.caption = changes.caption;
     // An existing container carries the old caption.
     if (post.publishStep !== "NONE") Object.assign(data, { publishStep: "NONE", igContainerId: null });

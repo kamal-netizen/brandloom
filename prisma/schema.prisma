@@ -95,6 +95,10 @@ model Brand {
   accentColor    String   @default("#888888")
   logoAssetId    String?
   voiceNotes     String   @default("") // tone/claims rules for whoever writes captions
+  /// Comma-separated terms a caption for this brand may not contain (whole
+  /// words / hashtags, case-insensitive); the word "arabic-script" also bans
+  /// any Arabic letters. Enforced in src/lib/caption.ts brandRuleViolations.
+  blockedTerms   String   @default("")
   sortOrder      Int      @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt

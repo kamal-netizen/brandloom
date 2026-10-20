@@ -48,8 +48,10 @@ Do this for all five: Core Champs, JNK Nutrition, Muscle Rulz, Scoops Monster, P
    - Login variation: **General**
    - Access token: **User access token**
    - Assets: **Pages** and **Instagram accounts**
-   - Permissions — tick these five:
-     `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`, `business_management`
+   - Permissions — tick these six:
+     `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`, `business_management`,
+     and `pages_manage_posts` (Facebook Page posts and stories — needs the **Manage everything on your Page** use case
+     added to the app first)
    - Create, then copy the **Configuration ID** (a long number).
 
 ## 4. App settings → Basic

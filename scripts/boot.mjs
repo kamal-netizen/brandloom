@@ -18,6 +18,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { ensureBucket, storageConfig } from "../src/lib/storage-client.mjs";
 
 // Local runs read .env like `next start` does (existing variables win);
 // in a Shipyard container there is no .env and the platform's env is used.
@@ -42,6 +43,16 @@ server.on("error", (err) => {
   console.error(`[boot] could not start next — ${err.message}`);
   process.exit(1);
 });
+
+// The media bucket has to exist before the first upload. Creating it is
+// idempotent ("exists" on every later boot); a failure is logged, not fatal —
+// uploads would report it, and the next boot tries again.
+const storage = storageConfig();
+if (storage) {
+  ensureBucket(storage)
+    .then((r) => console.log(`[boot] media bucket ${storage.bucket}: ${r}`))
+    .catch((err) => console.error(`[boot] could not ensure media bucket — ${err.message}`));
+}
 
 let stopping = false;
 let timer = null;

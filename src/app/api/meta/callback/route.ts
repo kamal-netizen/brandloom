@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { db } from "@/lib/db";
+import { appUrl, secureCookies } from "@/lib/site-url";
 import { assertAdmin } from "@/lib/admin";
 import { exchangeCode, pagesWithInstagram, readState } from "@/lib/meta/oauth";
 import { GraphError } from "@/lib/meta/graph";
@@ -14,21 +15,21 @@ import { autoPick, bindPage, ConnectError, PICK_COOKIE, sealPick, STATE_COOKIE }
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const back = (slug: string, q: string) => NextResponse.redirect(new URL(`/brands/${slug}?${q}`, url));
+  const back = (slug: string, q: string) => NextResponse.redirect(appUrl(`/brands/${slug}?${q}`));
 
   let user;
   try {
     user = await assertAdmin();
   } catch {
-    return NextResponse.redirect(new URL("/login", url));
+    return NextResponse.redirect(appUrl("/login"));
   }
   const jar = await cookies();
   const slug = readState(url.searchParams.get("state") ?? "", jar.get(STATE_COOKIE)?.value);
-  if (!slug) return NextResponse.redirect(new URL("/brands?error=" + encodeURIComponent("Login link expired or was not started here; try Connect again."), url));
+  if (!slug) return NextResponse.redirect(appUrl("/brands?error=" + encodeURIComponent("Login link expired or was not started here; try Connect again.")));
   jar.delete({ name: STATE_COOKIE, path: "/api/meta" });
 
   const brand = await db.brand.findUnique({ where: { slug } });
-  if (!brand) return NextResponse.redirect(new URL("/brands", url));
+  if (!brand) return NextResponse.redirect(appUrl("/brands"));
 
   if (url.searchParams.get("error")) {
     return back(slug, "error=" + encodeURIComponent(url.searchParams.get("error_description") ?? "Facebook login was cancelled."));
@@ -51,10 +52,10 @@ export async function GET(req: Request) {
           encodeURIComponent("None of the Pages you granted has an Instagram professional account linked. Link the IG account to its Facebook Page, then Connect again.")
       );
     }
-    const res = NextResponse.redirect(new URL(`/brands/${slug}/connect`, url));
+    const res = NextResponse.redirect(appUrl(`/brands/${slug}/connect`));
     res.cookies.set(PICK_COOKIE, sealPick({ brand: slug, token, expiresAt: expiresAt?.toISOString() ?? null, at: Date.now() }), {
       httpOnly: true,
-      secure: url.protocol === "https:",
+      secure: secureCookies(),
       sameSite: "lax",
       path: "/",
       maxAge: 15 * 60,

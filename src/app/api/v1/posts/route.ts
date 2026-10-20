@@ -5,13 +5,14 @@ import { serializePost } from "@/lib/api-serialize";
 import { IngestError, saveAsset } from "@/lib/ingest";
 import { createPost, PostError } from "@/lib/posts";
 import { FITS, type Fit } from "@/lib/renditions";
-import { isPostStatus } from "@/lib/status";
+import { isPostStatus, PLATFORMS, type Platform } from "@/lib/status";
 import { parseDubai } from "@/lib/time";
 
 /**
  * POST /api/v1/posts  (multipart/form-data)
  *   brand        slug (required)
  *   type         feed | story (required)
+ *   platforms    instagram (default) | facebook | instagram,facebook — one post per platform
  *   caption      text, or a file part named caption
  *   files[]      one image   — or —   assetIds  an existing asset id
  *   hashtagSet   set name or "default" (appended to the caption)
@@ -50,7 +51,11 @@ export async function POST(req: Request) {
     const publishNow = ["1", "true", "yes"].includes(str("publishNow").toLowerCase());
     const desiredRaw = str("status").toLowerCase() || "pending";
     if (!["draft", "pending", "scheduled"].includes(desiredRaw)) throw new ApiError(400, "invalid", "status must be draft, pending or scheduled.");
-    const externalRef = (req.headers.get("idempotency-key") ?? str("externalRef")).slice(0, 200) || null;
+    const externalRef = (req.headers.get("idempotency-key") ?? str("externalRef")).slice(0, 190) || null;
+    const platforms = [...new Set((str("platforms") || "instagram").toUpperCase().split(",").map((p) => p.trim()).filter(Boolean))];
+    if (!platforms.length || !platforms.every((p): p is Platform => (PLATFORMS as readonly string[]).includes(p))) {
+      throw new ApiError(400, "invalid", "platforms must be instagram, facebook or instagram,facebook.");
+    }
 
     let assetIds = form
       .getAll("assetIds")
@@ -72,26 +77,34 @@ export async function POST(req: Request) {
       }
     }
 
-    const { post, created } = await createPost({
-      brand,
-      type,
-      caption,
-      hashtagSet: str("hashtagSet") || undefined,
-      assetIds,
-      fit,
-      scheduledAt,
-      publishNow,
-      desired: desiredRaw as "draft" | "pending" | "scheduled",
-      source: "API",
-      externalRef,
-      createdByTokenId: token.id,
-      canApprove: hasScope(token, "posts:approve"),
-    });
-    const full = await db.post.findUniqueOrThrow({
-      where: { id: post.id },
-      include: { brand: { select: { slug: true } }, media: { include: { rendition: true } } },
-    });
-    return Response.json({ post: serializePost(full), created }, { status: created ? 201 : 200 });
+    const results = [];
+    for (const platform of platforms as Platform[]) {
+      // Instagram keeps the bare key, so repeats of older single-platform calls still match.
+      const ref = externalRef ? (platform === "INSTAGRAM" ? externalRef : `${externalRef}:${platform.toLowerCase()}`) : null;
+      const { post, created } = await createPost({
+        brand,
+        type,
+        platform,
+        caption,
+        hashtagSet: str("hashtagSet") || undefined,
+        assetIds,
+        fit,
+        scheduledAt,
+        publishNow,
+        desired: desiredRaw as "draft" | "pending" | "scheduled",
+        source: "API",
+        externalRef: ref,
+        createdByTokenId: token.id,
+        canApprove: hasScope(token, "posts:approve"),
+      });
+      const full = await db.post.findUniqueOrThrow({
+        where: { id: post.id },
+        include: { brand: { select: { slug: true } }, media: { include: { rendition: true } } },
+      });
+      results.push({ post: serializePost(full), created });
+    }
+    const anyCreated = results.some((r) => r.created);
+    return Response.json({ post: results[0].post, created: results[0].created, posts: results }, { status: anyCreated ? 201 : 200 });
   } catch (err) {
     if (err instanceof PostError) return apiErrorResponse(new ApiError(err.status, err.code, err.message));
     return apiErrorResponse(err);

@@ -8,6 +8,7 @@
  *   brandloom brands
  *   brandloom post --brand corechamps --type feed --file poster.jpg
  *                  (--caption "…" | --caption-file caption.txt) [--hashtags default|<set>]
+ *                  [--platforms instagram|facebook|instagram,facebook]   (default instagram)
  *                  [--at "2026-10-20 19:00" | --at 2026-10-20T19:00+04:00 | --now] [--draft]
  *                  [--fit reject|crop|pad] [--ref <idempotency key>] [--json]
  *   brandloom list [--brand x] [--status pending|scheduled|published|failed|draft] [--from …] [--to …] [--json]
@@ -15,6 +16,7 @@
  *   brandloom reschedule <id> --at "2026-10-21 19:00"
  *   brandloom cancel <id>
  *   brandloom quota --brand x
+ *   brandloom rights [--brand x]      (asks Meta now: can we post / story on Instagram and Facebook?)
  *
  * Times without an offset are Dubai time. Posts land as PENDING_APPROVAL:
  * someone approves them in the app before they can reach Instagram.
@@ -106,7 +108,7 @@ function fmt(iso) {
 
 function line(p) {
   const when = p.publishedAt ? `published ${fmt(p.publishedAt)}` : p.scheduledAt ? fmt(p.scheduledAt) : p.publishOnApprove ? "on approval" : "no time";
-  return `${p.id}  ${p.brand.padEnd(13)} ${p.type.padEnd(5)} ${p.status.padEnd(16)} ${when}${p.permalink ? `  ${p.permalink}` : ""}${p.lastError ? `  ! ${p.lastError}` : ""}`;
+  return `${p.id}  ${p.brand.padEnd(13)} ${(p.platform ?? "instagram").padEnd(9)} ${p.type.padEnd(5)} ${p.status.padEnd(16)} ${when}${p.permalink ? `  ${p.permalink}` : ""}${p.lastError ? `  ! ${p.lastError}` : ""}`;
 }
 
 function out(opt, data, human) {
@@ -133,7 +135,10 @@ async function cmdPost(opt) {
   if (opt.now) form.set("publishNow", "true");
   if (opt.draft) form.set("status", "draft");
   if (opt.fit) form.set("fit", opt.fit);
+  if (opt.platforms) form.set("platforms", String(opt.platforms));
 
+  // Platforms are not in the key: the server suffixes it per platform, so adding
+  // facebook to a command that already ran for instagram creates only the new one.
   const hash = createHash("sha256").update(`${opt.brand}\n${type}\n${caption}\n${opt.at ?? ""}\n${opt.now ? "now" : ""}\n`);
   for (const f of files) {
     const mime = MIME[path.extname(f).toLowerCase()];
@@ -149,7 +154,11 @@ async function cmdPost(opt) {
   }
   const ref = opt.ref ?? `cli-${hash.digest("hex").slice(0, 32)}`;
   const res = await call("POST", "/posts", { body: form, headers: { "idempotency-key": ref } });
-  out(opt, res, (r) => `${r.created ? "created" : "already exists"}: ${line(r.post)}\nreview: ${r.post.reviewUrl}`);
+  out(opt, res, (r) =>
+    (r.posts ?? [{ post: r.post, created: r.created }])
+      .map((x) => `${x.created ? "created" : "already exists"}: ${line(x.post)}\nreview: ${x.post.reviewUrl}`)
+      .join("\n")
+  );
 }
 
 async function main() {
@@ -191,6 +200,29 @@ async function main() {
     case "cancel":
       if (!arg) throw new CliError("cancel <id>");
       return out(opt, await call("DELETE", `/posts/${encodeURIComponent(arg)}`), (r) => line(r.post));
+    case "rights": {
+      const q = new URLSearchParams();
+      if (opt.brand) q.set("brand", opt.brand);
+      q.set("refresh", "1");
+      const mark = (r) => (r?.ok ? "ok " : "NO ");
+      return out(opt, await call("GET", `/rights?${q}`), (r) =>
+        r.brands
+          .map((b) =>
+            !b.connected
+              ? `${b.brand.padEnd(14)} not connected`
+              : `${b.brand.padEnd(14)} @${b.account} (${b.via})\n` +
+                [
+                  ["IG post", b.rights.instagram.feed],
+                  ["IG story", b.rights.instagram.story],
+                  ["FB post", b.rights.facebook.feed],
+                  ["FB story", b.rights.facebook.story],
+                ]
+                  .map(([l, x]) => `   ${mark(x)} ${l.padEnd(9)} ${x.ok ? "" : x.reason}`)
+                  .join("\n")
+          )
+          .join("\n")
+      );
+    }
     case "quota":
       if (!opt.brand) throw new CliError("quota --brand <slug>");
       return out(opt, await call("GET", `/quota?brand=${encodeURIComponent(opt.brand)}`), (r) =>

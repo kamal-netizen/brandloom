@@ -6,7 +6,8 @@ import { db } from "@/lib/db";
 import { publicUrl } from "@/lib/media-store";
 import { metaConfigured } from "@/lib/meta/oauth";
 import { igConfigured } from "@/lib/meta/ig-oauth";
-import { deleteHashtagSetAction, disconnectAction, saveBrandAction, saveHashtagSetAction } from "@/app/actions/brands";
+import { checkRightsAction, deleteHashtagSetAction, disconnectAction, saveBrandAction, saveHashtagSetAction } from "@/app/actions/brands";
+import { storedRights } from "@/lib/meta/rights";
 import { Notice, PageHeader } from "@/components/ui";
 import { formatDubai, requestNow } from "@/lib/time";
 
@@ -184,6 +185,7 @@ export default async function BrandPage({
                     </>
                   )}
                 </dl>
+                <RightsTable rights={storedRights(c)} slug={slug} />
                 <div className="flex gap-2">
                   <a href={c.loginType === "INSTAGRAM" ? `/api/meta/ig-connect?brand=${slug}` : `/api/meta/connect?brand=${slug}`} className="btn-ghost">
                     Reconnect
@@ -241,6 +243,42 @@ export default async function BrandPage({
           </section>
         </aside>
       </div>
+    </div>
+  );
+}
+
+function RightsTable({ rights, slug }: { rights: ReturnType<typeof storedRights>; slug: string }) {
+  const rows = rights
+    ? ([
+        ["Instagram post", rights.instagram.feed],
+        ["Instagram story", rights.instagram.story],
+        ["Facebook post", rights.facebook.feed],
+        ["Facebook story", rights.facebook.story],
+      ] as const)
+    : [];
+  return (
+    <div className="rounded-lg border border-line p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted">Publishing rights</span>
+        <form action={checkRightsAction}>
+          <input type="hidden" name="slug" value={slug} />
+          <button className="text-xs text-muted underline-offset-2 hover:text-white hover:underline">Check now</button>
+        </form>
+      </div>
+      {!rights ? (
+        <p className="text-xs text-muted">Not checked yet.</p>
+      ) : (
+        <ul className="space-y-1.5 text-xs">
+          {rows.map(([label, r]) => (
+            <li key={label} className="flex gap-2">
+              <span className={r.ok ? "text-emerald-400" : "text-red-400"}>{r.ok ? "✓" : "✗"}</span>
+              <span className="w-28 shrink-0">{label}</span>
+              {!r.ok && <span className="text-muted">{r.reason}</span>}
+            </li>
+          ))}
+          <li className="pt-1 text-[11px] text-muted">Checked {formatDubai(new Date(rights.checkedAt))}</li>
+        </ul>
+      )}
     </div>
   );
 }

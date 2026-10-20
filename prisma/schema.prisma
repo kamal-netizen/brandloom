@@ -136,6 +136,8 @@ model IgConnection {
   fbPageName          String?
   pageTokenEnc        String // the access token, AES-256-GCM (src/lib/crypto.ts); a Page token or an Instagram user token
   tokenExpiresAt      DateTime? // INSTAGRAM tokens only
+  rightsJson          String    @default("") // last publishing-rights check (src/lib/meta/rights.ts)
+  rightsCheckedAt     DateTime?
   userTokenExpiresAt  DateTime?
   dataAccessExpiresAt DateTime?
   scopes              String    @default("")
@@ -211,6 +213,7 @@ model Post {
   brandId          String
   brand            Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
   type             String // FEED | STORY | REEL | CAROUSEL
+  platform         String    @default("INSTAGRAM") // INSTAGRAM | FACEBOOK (the brand's Facebook Page)
   status           String    @default("DRAFT") // see src/lib/status.ts
   caption          String    @default("")
   scheduledAt      DateTime?

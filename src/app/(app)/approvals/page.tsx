@@ -43,7 +43,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: Pr
                   <div className="flex flex-wrap items-center gap-2 text-sm">
                     <BrandDot color={brandColor(p.brand)} />
                     <span className="font-semibold">{p.brand.name}</span>
-                    <span className="text-muted">· {p.type === "STORY" ? "Story" : "Feed post"} · from {p.source === "API" ? "automation" : "the app"}</span>
+                    <span className="text-muted">· {p.platform === "FACEBOOK" ? "Facebook" : "Instagram"} {p.type === "STORY" ? "story" : "post"} · from {p.source === "API" ? "automation" : "the app"}</span>
                     <Link href={`/posts/${p.id}`} className="ml-auto text-xs text-muted underline-offset-2 hover:underline">
                       Open
                     </Link>

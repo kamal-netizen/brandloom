@@ -51,11 +51,16 @@ export async function createPostAction(_prev: ActionState, f: FormData): Promise
     scheduledAt = parseDubai(str(f, "scheduledAt"));
   }
 
-  let id: string;
+  const platforms = f.getAll("platforms").map(String).filter((p): p is "INSTAGRAM" | "FACEBOOK" => p === "INSTAGRAM" || p === "FACEBOOK");
+  if (!platforms.length) return { error: "Pick Instagram, Facebook or both." };
+
+  const ids: string[] = [];
   try {
+    for (const platform of platforms) {
     const { post } = await createPost({
       brand,
       type,
+      platform,
       caption: str(f, "caption"),
       assetIds: [assetId],
       fit,
@@ -66,13 +71,20 @@ export async function createPostAction(_prev: ActionState, f: FormData): Promise
       createdByUserId: user.id,
       canApprove: true, // an admin in the UI is the approver
     });
-    id = post.id;
+    ids.push(post.id);
+    }
   } catch (err) {
     return { error: message(err) };
   }
   revalidatePath("/calendar");
-  if (intent === "now") redirect(`/posts/${id}?${await publishOutcome(id)}`);
-  redirect(`/posts/${id}?ok=${encodeURIComponent(intent === "draft" ? "Draft saved." : "Scheduled.")}`);
+  const id = ids[0];
+  if (intent === "now") {
+    const outcomes = [];
+    for (const each of ids) outcomes.push(await publishOutcome(each));
+    redirect(`/posts/${id}?${outcomes[0]}`);
+  }
+  const what = intent === "draft" ? "Draft saved" : "Scheduled";
+  redirect(`/posts/${id}?ok=${encodeURIComponent(ids.length > 1 ? `${what} for Instagram and Facebook (two posts).` : `${what}.`)}`);
 }
 
 export async function approveAction(f: FormData) {

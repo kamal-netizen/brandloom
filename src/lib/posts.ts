@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { appendHashtags, checkCaption } from "@/lib/caption";
 import { ensureRendition, IngestError } from "@/lib/ingest";
 import { purposeFor, type Fit } from "@/lib/renditions";
-import { CANCELLABLE, EDITABLE, type PostStatus, type PostType } from "@/lib/status";
+import { CANCELLABLE, EDITABLE, type Platform, type PostStatus, type PostType } from "@/lib/status";
 import { MIN_LEAD_MS } from "@/lib/time";
 
 /**
@@ -26,6 +26,7 @@ export class PostError extends Error {
 export type CreatePostInput = {
   brand: Brand;
   type: PostType;
+  platform?: Platform;
   caption: string;
   hashtagSet?: string; // a set name, or "default"
   assetIds: string[];
@@ -102,6 +103,7 @@ export async function createPost(input: CreatePostInput): Promise<{ post: Post; 
       data: {
         brandId: brand.id,
         type: input.type,
+        platform: input.platform ?? "INSTAGRAM",
         status,
         caption,
         scheduledAt,

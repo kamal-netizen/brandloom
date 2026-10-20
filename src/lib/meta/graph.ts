@@ -82,6 +82,15 @@ export interface Graph {
   permalink(mediaId: string, token: string): Promise<string | null>;
   recentMedia(igUserId: string, token: string, limit?: number): Promise<{ id: string; timestamp: string; permalink?: string }[]>;
   publishingLimit(igUserId: string, token: string): Promise<{ used: number; total: number } | null>;
+
+  // ---- Facebook Page publishing (graph.facebook.com, Page token, pages_manage_posts) ----
+  /** A photo on the Page. published=false uploads it for a story; returns the photo id and, when published, the feed post id. */
+  fbPhoto(pageId: string, token: string, args: { url: string; message?: string; published: boolean }): Promise<{ photoId: string; postId?: string }>;
+  /** Turns an unpublished Page photo into a Page story; returns the story's post id. */
+  fbPhotoStory(pageId: string, token: string, photoId: string): Promise<string>;
+  fbPermalink(postId: string, token: string): Promise<string | null>;
+  /** Most recent Page feed posts or stories, for verifying an interrupted publish. */
+  fbRecent(pageId: string, token: string, story: boolean): Promise<{ id: string; time: string; permalink?: string }[]>;
 }
 
 /** A Graph client bound to one host. */
@@ -120,6 +129,39 @@ export function makeGraph(host: string): Graph {
       access_token: token,
     });
     return r.data ?? [];
+  },
+  async fbPhoto(pageId, token, { url, message, published }) {
+    const r = await call<{ id: string; post_id?: string }>("POST", `${pageId}/photos`, {
+      url,
+      message: published ? message : undefined,
+      published: published ? "true" : "false",
+      access_token: token,
+    });
+    return { photoId: r.id, postId: r.post_id };
+  },
+  async fbPhotoStory(pageId, token, photoId) {
+    const r = await call<{ post_id?: string; success?: boolean }>("POST", `${pageId}/photo_stories`, { photo_id: photoId, access_token: token });
+    if (!r.post_id) throw new GraphError("Facebook did not return a story id", 500, -1);
+    return r.post_id;
+  },
+  async fbPermalink(postId, token) {
+    const r = await call<{ permalink_url?: string }>("GET", postId, { fields: "permalink_url", access_token: token });
+    return r.permalink_url ?? null;
+  },
+  async fbRecent(pageId, token, story) {
+    if (story) {
+      const r = await call<{ data?: { post_id: string; creation_time?: string; url?: string }[] }>("GET", `${pageId}/stories`, {
+        fields: "post_id,creation_time,url",
+        access_token: token,
+      });
+      return (r.data ?? []).map((x) => ({ id: x.post_id, time: x.creation_time ? new Date(Number(x.creation_time) * 1000 || x.creation_time).toISOString() : "", permalink: x.url }));
+    }
+    const r = await call<{ data?: { id: string; created_time: string; permalink_url?: string }[] }>("GET", `${pageId}/published_posts`, {
+      fields: "id,created_time,permalink_url",
+      limit: 10,
+      access_token: token,
+    });
+    return (r.data ?? []).map((x) => ({ id: x.id, time: new Date(x.created_time).toISOString(), permalink: x.permalink_url }));
   },
   async publishingLimit(igUserId, token) {
     const r = await call<{ data?: { quota_usage?: number; config?: { quota_total?: number } }[] }>(

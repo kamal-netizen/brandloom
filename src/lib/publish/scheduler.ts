@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { refreshIgToken } from "@/lib/meta/ig-oauth";
 import { inspectToken, metaConfigured } from "@/lib/meta/oauth";
+import { refreshRights } from "@/lib/meta/rights";
 import { advance, claimDue, INSTANCE, recoverStale, type AdvanceResult, type EngineDeps } from "./engine";
 
 /**
@@ -54,6 +55,8 @@ async function tokenHealth(): Promise<number> {
     take: 5,
   });
   for (const conn of conns) {
+    // Whatever the token check finds, the stored rights should say the same.
+    await refreshRights(conn).catch(() => {});
     if (conn.loginType === "INSTAGRAM") {
       await instagramTokenHealth(conn);
       continue;

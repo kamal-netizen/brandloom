@@ -178,3 +178,55 @@ describe("Instagram-login connections", () => {
     expect(graphFor({ loginType: "FACEBOOK" })).toBe(graph);
   });
 });
+
+describe("Facebook Page publishing", () => {
+  it("publishes a feed photo with the caption", async () => {
+    const brand = await brandWithConnection();
+    const post = await duePost(brand.id, { platform: "FACEBOOK" });
+    const ig = fakeGraph();
+    const r = await tick({ graph: ig.graph, instance: "fb", sleep: noSleep });
+    expect(r.results[post.id]).toBe("published");
+    expect(ig.fbPosts).toHaveLength(1);
+    expect(ig.fbPosts[0].message).toBe("Test caption #gym");
+    expect(ig.calls.create).toBe(0); // never touched Instagram
+    const row = await db.post.findUniqueOrThrow({ where: { id: post.id } });
+    expect(row).toMatchObject({ status: "PUBLISHED", igPermalink: ig.fbPosts[0].permalink });
+  });
+
+  it("publishes a story as unpublished photo + photo_stories", async () => {
+    const brand = await brandWithConnection();
+    const post = await duePost(brand.id, { platform: "FACEBOOK", type: "STORY" });
+    const ig = fakeGraph();
+    await tick({ graph: ig.graph, instance: "fb", sleep: noSleep });
+    expect([ig.calls.fbPhoto, ig.calls.fbStory]).toEqual([1, 1]);
+    expect(ig.fbPosts.filter((p) => p.story)).toHaveLength(1);
+    expect((await db.post.findUniqueOrThrow({ where: { id: post.id } })).status).toBe("PUBLISHED");
+  });
+
+  it("finds an interrupted Facebook publish on the Page instead of posting twice", async () => {
+    const brand = await brandWithConnection();
+    const post = await duePost(brand.id, { platform: "FACEBOOK" });
+    const ig = fakeGraph();
+    ig.fbLoseResponse = true;
+    const [id] = await claimDue("a", 1);
+    expect(await advance(id, { graph: ig.graph, instance: "a", sleep: noSleep })).toBe("retrying");
+    await db.post.update({ where: { id: post.id }, data: { nextAttemptAt: null } });
+    ig.fbLoseResponse = false;
+    const [again] = await claimDue("b", 1);
+    expect(await advance(again, { graph: ig.graph, instance: "b", sleep: noSleep })).toBe("published");
+    expect(ig.calls.fbPhoto).toBe(1);
+    expect(ig.fbPosts).toHaveLength(1);
+  });
+
+  it("refuses Facebook for a brand connected through Instagram login", async () => {
+    const brand = await db.brand.create({ data: { slug: "sm", name: "SM" } });
+    await db.igConnection.create({
+      data: { brandId: brand.id, loginType: "INSTAGRAM", igUserId: "1", igUsername: "sm", pageTokenEnc: (await import("@/lib/crypto")).encrypt("page-token") },
+    });
+    const post = await duePost(brand.id, { platform: "FACEBOOK" });
+    await tick({ graph: fakeGraph().graph, instance: "x", sleep: noSleep });
+    const row = await db.post.findUniqueOrThrow({ where: { id: post.id } });
+    expect(row.status).toBe("FAILED");
+    expect(row.lastError).toMatch(/no Facebook Page/);
+  });
+});

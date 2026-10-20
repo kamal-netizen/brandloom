@@ -20,6 +20,10 @@ export const POST_STATUSES = [
 export type PostStatus = (typeof POST_STATUSES)[number];
 
 export const POST_TYPES = ["FEED", "STORY"] as const; // REEL / CAROUSEL: later phase
+
+export const PLATFORMS = ["INSTAGRAM", "FACEBOOK"] as const;
+export type Platform = (typeof PLATFORMS)[number];
+export const PLATFORM_LABEL: Record<Platform, string> = { INSTAGRAM: "Instagram", FACEBOOK: "Facebook" };
 export type PostType = (typeof POST_TYPES)[number];
 
 export const PUBLISH_STEPS = ["NONE", "CONTAINER_CREATED", "CONTAINER_READY", "PUBLISH_CALLED", "DONE"] as const;

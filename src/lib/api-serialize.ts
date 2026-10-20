@@ -10,6 +10,7 @@ export function serializePost(p: PostWithMedia) {
     id: p.id,
     brand: p.brand?.slug,
     type: p.type.toLowerCase(),
+    platform: p.platform.toLowerCase(),
     status: p.status.toLowerCase(),
     caption: p.caption,
     scheduledAt: p.scheduledAt?.toISOString() ?? null,

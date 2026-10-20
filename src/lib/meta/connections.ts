@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { decrypt, encrypt } from "@/lib/crypto";
+import { refreshRights } from "./rights";
 import type { PageWithIg } from "./oauth";
 
 /** Cookie carrying the (encrypted) long-lived user token between callback and page picker. */
@@ -59,9 +60,10 @@ export async function bindPage(brandId: string, page: PageWithIg, userTokenExpir
     lastCheckedAt: null,
     connectedByUserId: userId,
   };
-  await db.igConnection.upsert({ where: { brandId }, create: { brandId, ...data }, update: data });
+  const conn = await db.igConnection.upsert({ where: { brandId }, create: { brandId, ...data }, update: data });
   // The brand's handle follows the account actually connected.
   await db.brand.update({ where: { id: brandId }, data: { igHandle: page.ig.username } });
+  await refreshRights(conn).catch((err) => console.error(`[meta] rights check after connect failed — ${err.message}`));
 }
 
 /** Binds an Instagram-login account (no Facebook Page) to a brand. */
@@ -96,6 +98,7 @@ export async function bindInstagram(
     lastCheckedAt: null,
     connectedByUserId: userId,
   };
-  await db.igConnection.upsert({ where: { brandId }, create: { brandId, ...data }, update: data });
+  const conn = await db.igConnection.upsert({ where: { brandId }, create: { brandId, ...data }, update: data });
   await db.brand.update({ where: { id: brandId }, data: { igHandle: account.username } });
+  await refreshRights(conn).catch((err) => console.error(`[meta] rights check after connect failed — ${err.message}`));
 }

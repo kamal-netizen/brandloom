@@ -8,6 +8,7 @@ import { normaliseTags } from "@/lib/caption";
 import { bindPage, ConnectError, openPick, PICK_COOKIE } from "@/lib/meta/connections";
 import { pagesWithInstagram } from "@/lib/meta/oauth";
 import { GraphError } from "@/lib/meta/graph";
+import { refreshRights } from "@/lib/meta/rights";
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -90,4 +91,12 @@ export async function pickPageAction(f: FormData) {
     q = "error=" + encodeURIComponent(err instanceof ConnectError ? err.message : err instanceof GraphError ? err.display : "Connecting failed.");
   }
   redirect(`/brands/${slug}?${q}`);
+}
+
+export async function checkRightsAction(f: FormData) {
+  await assertAdmin();
+  const slug = str(f, "slug");
+  const brand = await db.brand.findUniqueOrThrow({ where: { slug }, include: { connection: true } });
+  if (brand.connection) await refreshRights(brand.connection);
+  redirect(`/brands/${slug}?ok=${encodeURIComponent("Publishing rights checked.")}`);
 }

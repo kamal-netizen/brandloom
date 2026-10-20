@@ -12,7 +12,7 @@ export default async function NewPostPage({ searchParams }: { searchParams: Prom
     orderBy: { sortOrder: "asc" },
     include: {
       hashtagSets: { orderBy: { name: "asc" } },
-      connection: { select: { status: true } },
+      connection: { select: { status: true, loginType: true, fbPageId: true } },
       assets: {
         where: { kind: "IMAGE" },
         orderBy: { createdAt: "desc" },
@@ -33,6 +33,7 @@ export default async function NewPostPage({ searchParams }: { searchParams: Prom
           name: b.name,
           handle: b.igHandle,
           connected: b.connection?.status === "CONNECTED",
+          hasPage: Boolean(b.connection?.fbPageId && b.connection.loginType === "FACEBOOK"),
           sets: b.hashtagSets.map((h) => ({ name: h.name, tags: h.tags })),
           assets: b.assets.map((a) => ({
             id: a.id,

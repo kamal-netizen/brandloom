@@ -169,7 +169,9 @@ export default async function CalendarPage({
                       title={`${p.brand.name} · ${p.type} · ${p.status}`}
                     >
                       <span className="text-muted">{formatDubaiTime(p.publishedAt ?? p.scheduledAt!)}</span>{" "}
-                      <span className="font-medium text-zinc-200">{p.type === "STORY" ? "Story" : "Post"}</span>{" "}
+                      <span className="font-medium text-zinc-200">
+                        {p.platform === "FACEBOOK" ? "FB" : "IG"} {p.type === "STORY" ? "story" : "post"}
+                      </span>{" "}
                       <span className="text-zinc-400">{p.brand.name}</span>
                       <span
                         className={cn(

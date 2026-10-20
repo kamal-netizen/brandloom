@@ -9,7 +9,7 @@ import { cn, Notice } from "@/components/ui";
 import { appendHashtags, checkCaption } from "@/lib/caption";
 
 type AssetLite = { id: string; name: string; width: number; height: number; thumb: string | null };
-type BrandLite = { slug: string; name: string; handle: string | null; connected: boolean; sets: { name: string; tags: string }[]; assets: AssetLite[] };
+type BrandLite = { slug: string; name: string; handle: string | null; connected: boolean; hasPage: boolean; sets: { name: string; tags: string }[]; assets: AssetLite[] };
 
 const RATIO = { FEED: 4 / 5, STORY: 9 / 16 };
 
@@ -34,6 +34,7 @@ export function Composer({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [fit, setFit] = useState("reject");
+  const [platforms, setPlatforms] = useState<string[]>(["INSTAGRAM"]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const brand = brands.find((b) => b.slug === slug) ?? brands[0];
@@ -76,6 +77,9 @@ export function Composer({
       <input type="hidden" name="type" value={type} />
       <input type="hidden" name="assetId" value={assetId} />
       <input type="hidden" name="fit" value={fit} />
+      {platforms.filter((p) => p !== "FACEBOOK" || brand?.hasPage).map((p) => (
+        <input key={p} type="hidden" name="platforms" value={p} />
+      ))}
 
       <div className="space-y-6">
         {state?.error && <Notice tone="error">{state.error}</Notice>}
@@ -115,6 +119,27 @@ export function Composer({
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+
+        <div>
+          <span className="label">Publish to</span>
+          <div className="flex flex-wrap gap-4 text-sm">
+            {(["INSTAGRAM", "FACEBOOK"] as const).map((p) => {
+              const disabled = p === "FACEBOOK" && !brand?.hasPage;
+              return (
+                <label key={p} className={cn("flex items-center gap-2", disabled && "text-zinc-600")}>
+                  <input
+                    type="checkbox"
+                    disabled={disabled}
+                    checked={platforms.includes(p) && !disabled}
+                    onChange={(e) => setPlatforms((cur) => (e.target.checked ? [...new Set([...cur, p])] : cur.filter((x) => x !== p)))}
+                  />
+                  {p === "INSTAGRAM" ? "Instagram" : "Facebook Page"}
+                  {disabled && <span className="text-xs">(no Facebook Page connected)</span>}
+                </label>
+              );
+            })}
           </div>
         </div>
 

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Post" ADD COLUMN     "platform" TEXT NOT NULL DEFAULT 'INSTAGRAM';

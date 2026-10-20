@@ -44,7 +44,7 @@ export default async function PostPage({
   return (
     <div>
       <PageHeader
-        title={`${post.brand.name} · ${post.type === "STORY" ? "Story" : "Feed post"}`}
+        title={`${post.brand.name} · ${post.platform === "FACEBOOK" ? "Facebook" : "Instagram"} ${post.type === "STORY" ? "story" : "post"}`}
         sub={
           <span className="flex flex-wrap items-center gap-2">
             <BrandDot color={brandColor(post.brand)} />
@@ -57,7 +57,7 @@ export default async function PostPage({
         actions={
           post.igPermalink && (
             <a href={post.igPermalink} target="_blank" rel="noreferrer" className="btn-primary">
-              View on Instagram
+              View on {post.platform === "FACEBOOK" ? "Facebook" : "Instagram"}
             </a>
           )
         }

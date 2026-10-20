@@ -209,9 +209,18 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
     return "failed";
   }
   const token = decrypt(conn.pageTokenEnc);
+  const story = post.type === "STORY";
+
+  if (post.platform === "FACEBOOK") {
+    if (conn.loginType !== "FACEBOOK" || !conn.fbPageId) {
+      await fail(c, post.id, `${post.brand.name} has no Facebook Page connected (it is connected through Instagram login), so it cannot post to Facebook.`);
+      return "failed";
+    }
+    return runFacebook(c, post, conn.fbPageId, token, publicUrl(media.rendition.key), story, c.graph ?? graphFor(conn));
+  }
+
   const api = c.graph ?? graphFor(conn);
   const ig = conn.igUserId;
-  const story = post.type === "STORY";
 
   let step = post.publishStep;
   let containerId = post.igContainerId;
@@ -258,7 +267,7 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
 
     if (step === "CONTAINER_READY") {
       const since = new Date(Date.now() - 24 * 60 * 60_000);
-      const ours = await db.post.count({ where: { brandId: post.brandId, status: "PUBLISHED", publishedAt: { gte: since } } });
+      const ours = await db.post.count({ where: { brandId: post.brandId, platform: post.platform, status: "PUBLISHED", publishedAt: { gte: since } } });
       if (ours >= c.dailyCap) {
         await defer(c, post.id, DEFER_QUOTA_MS, `Daily cap of ${c.dailyCap} posts reached for this brand; waiting.`);
         return "deferred";
@@ -325,9 +334,75 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
   return "deferred";
 }
 
-async function finish(c: Ctx, api: Graph, id: string, mediaId: string | null, token: string, knownPermalink?: string) {
+/**
+ * Facebook Page publishing. A feed photo is one call (POST /{page}/photos);
+ * a story is an unpublished photo upload, then /{page}/photo_stories. The
+ * same rule as Instagram: PUBLISH_CALLED is saved before the publishing
+ * call, and a resumed run looks for the post on the Page instead of posting
+ * again — it does not re-publish blindly, because Facebook has no container
+ * whose state can be asked.
+ */
+async function runFacebook(
+  c: Ctx,
+  post: { id: string; caption: string; updatedAt: Date; publishStep: string; igContainerId: string | null; brandId: string },
+  pageId: string,
+  token: string,
+  imageUrl: string,
+  story: boolean,
+  api: Graph
+): Promise<AdvanceResult> {
+  const since = new Date(Date.now() - 24 * 60 * 60_000);
+  let step = post.publishStep;
+  let photoId = post.igContainerId;
+
+  if (step === "PUBLISH_CALLED") {
+    const lastPublish = await db.publishAttempt.findFirst({ where: { postId: post.id, step: "FB_PUBLISH" }, orderBy: { startedAt: "desc" } });
+    const after = (lastPublish?.startedAt ?? post.updatedAt).getTime() - 2 * 60_000;
+    const recent = await logged(c, post.id, "FB_VERIFY", () => api.fbRecent(pageId, token, story));
+    const match = recent.filter((r) => r.time && new Date(r.time).getTime() >= after).sort((a, b) => a.time.localeCompare(b.time))[0];
+    if (match) {
+      await finish(c, api, post.id, match.id, token, match.permalink, true);
+      return "published";
+    }
+    await fail(c, post.id, "Facebook publish outcome unknown — check the Page before retrying.");
+    return "failed";
+  }
+
+  const ours = await db.post.count({ where: { brandId: post.brandId, platform: "FACEBOOK", status: "PUBLISHED", publishedAt: { gte: since } } });
+  if (ours >= c.dailyCap) {
+    await defer(c, post.id, DEFER_QUOTA_MS, `Daily cap of ${c.dailyCap} Facebook posts reached for this brand; waiting.`);
+    return "deferred";
+  }
+
+  if (story && (step === "NONE" || !photoId)) {
+    const up = await logged(c, post.id, "FB_UPLOAD", () => api.fbPhoto(pageId, token, { url: imageUrl, published: false }));
+    photoId = up.photoId;
+    await owned(c, post.id, { igContainerId: photoId, publishStep: "CONTAINER_READY" });
+    step = "CONTAINER_READY";
+  }
+
+  await owned(c, post.id, { publishStep: "PUBLISH_CALLED" });
+  let postId: string;
+  try {
+    postId = await logged(c, post.id, "FB_PUBLISH", async () =>
+      story
+        ? api.fbPhotoStory(pageId, token, photoId!)
+        : (await api.fbPhoto(pageId, token, { url: imageUrl, message: post.caption, published: true })).postId ?? ""
+    );
+  } catch (err) {
+    // A definite refusal published nothing: step back so a retry may try again.
+    if (err instanceof GraphError && !err.transient && err.httpStatus >= 400 && err.httpStatus < 500) {
+      await owned(c, post.id, { publishStep: story ? "CONTAINER_READY" : "NONE" });
+    }
+    throw err;
+  }
+  await finish(c, api, post.id, postId || null, token, undefined, true);
+  return "published";
+}
+
+async function finish(c: Ctx, api: Graph, id: string, mediaId: string | null, token: string, knownPermalink?: string, facebook = false) {
   let permalink = knownPermalink ?? null;
-  if (mediaId && !permalink) permalink = await api.permalink(mediaId, token).catch(() => null);
+  if (mediaId && !permalink) permalink = await (facebook ? api.fbPermalink(mediaId, token) : api.permalink(mediaId, token)).catch(() => null);
   await owned(c, id, {
     status: "PUBLISHED",
     publishStep: "DONE",

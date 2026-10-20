@@ -51,7 +51,9 @@ export async function duePost(brandId: string, extra: Record<string, unknown> = 
 export function fakeGraph() {
   const containers = new Map<string, { status: ContainerStatus; caption?: string }>();
   const media: { id: string; timestamp: string; permalink: string; container: string }[] = [];
-  const calls = { create: 0, status: 0, publish: 0 };
+  const calls = { create: 0, status: 0, publish: 0, fbPhoto: 0, fbStory: 0 };
+  const fbPosts: { id: string; time: string; permalink: string; story: boolean; message?: string }[] = [];
+  let fbLoseResponse = false;
   let seq = 0;
   let publishBehaviour: "ok" | "lose-response" | "refuse" = "ok";
   let createStatus: ContainerStatus = "FINISHED";
@@ -90,12 +92,38 @@ export function fakeGraph() {
     async publishingLimit() {
       return { used: media.length, total: 100 };
     },
+    async fbPhoto(_page, token, { message, published }) {
+      if (token !== "page-token") throw new GraphError("bad token", 400, 190);
+      calls.fbPhoto++;
+      const photoId = `ph${++seq}`;
+      if (!published) return { photoId };
+      const post = { id: `pg_${seq}`, time: new Date().toISOString(), permalink: `https://facebook.com/${seq}`, story: false, message };
+      fbPosts.push(post);
+      if (fbLoseResponse) throw new GraphError("network: socket hang up", 0, -1);
+      return { photoId, postId: post.id };
+    },
+    async fbPhotoStory(_page, _token, photoId) {
+      calls.fbStory++;
+      const post = { id: `st_${photoId}`, time: new Date().toISOString(), permalink: `https://facebook.com/stories/${photoId}`, story: true };
+      fbPosts.push(post);
+      return post.id;
+    },
+    async fbPermalink(postId) {
+      return fbPosts.find((p) => p.id === postId)?.permalink ?? null;
+    },
+    async fbRecent(_page, _token, story) {
+      return fbPosts.filter((p) => p.story === story).reverse();
+    },
   };
   return {
     graph,
     calls,
     media,
     containers,
+    fbPosts,
+    set fbLoseResponse(v: boolean) {
+      fbLoseResponse = v;
+    },
     set publishBehaviour(v: typeof publishBehaviour) {
       publishBehaviour = v;
     },

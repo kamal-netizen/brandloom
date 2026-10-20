@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
-import { decrypt } from "@/lib/crypto";
+import { decrypt, encrypt } from "@/lib/crypto";
+import { refreshIgToken } from "@/lib/meta/ig-oauth";
 import { inspectToken, metaConfigured } from "@/lib/meta/oauth";
 import { advance, claimDue, INSTANCE, recoverStale, type AdvanceResult, type EngineDeps } from "./engine";
 
@@ -47,13 +48,17 @@ export async function tick(deps: EngineDeps = {}): Promise<TickResult> {
  * so the remedy is always the one-click Reconnect, flagged 14 days ahead.
  */
 async function tokenHealth(): Promise<number> {
-  if (!metaConfigured()) return 0;
   const due = new Date(Date.now() - HEALTH_EVERY_MS);
   const conns = await db.igConnection.findMany({
     where: { status: { not: "DISCONNECTED" }, OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: due } }] },
     take: 5,
   });
   for (const conn of conns) {
+    if (conn.loginType === "INSTAGRAM") {
+      await instagramTokenHealth(conn);
+      continue;
+    }
+    if (!metaConfigured()) continue;
     try {
       const t = await inspectToken(decrypt(conn.pageTokenEnc));
       const expiring = t.dataAccessExpiresAt && t.dataAccessExpiresAt.getTime() - Date.now() < RECONNECT_WARN_MS;
@@ -75,4 +80,35 @@ async function tokenHealth(): Promise<number> {
     }
   }
   return conns.length;
+}
+
+/**
+ * Instagram-login tokens last 60 days and can only be refreshed while still
+ * valid and at least a day old. Refreshed once under 30 days left, so a few
+ * missed days never let one lapse; an expired or rejected token means the
+ * brand has to Connect again.
+ */
+const IG_REFRESH_UNDER_MS = 30 * 24 * 60 * 60_000;
+const IG_MIN_AGE_MS = 25 * 60 * 60_000;
+
+async function instagramTokenHealth(conn: { id: string; pageTokenEnc: string; tokenExpiresAt: Date | null; updatedAt: Date }) {
+  const now = Date.now();
+  const left = conn.tokenExpiresAt ? conn.tokenExpiresAt.getTime() - now : 0;
+  try {
+    if (left <= 0) throw new Error("Instagram token has expired");
+    if (left < IG_REFRESH_UNDER_MS && now - conn.updatedAt.getTime() > IG_MIN_AGE_MS) {
+      const fresh = await refreshIgToken(decrypt(conn.pageTokenEnc));
+      await db.igConnection.update({
+        where: { id: conn.id },
+        data: { pageTokenEnc: encrypt(fresh.token), tokenExpiresAt: fresh.expiresAt, lastCheckedAt: new Date(), status: "CONNECTED", lastError: null },
+      });
+      return;
+    }
+    await db.igConnection.update({ where: { id: conn.id }, data: { lastCheckedAt: new Date() } });
+  } catch (err) {
+    await db.igConnection.update({
+      where: { id: conn.id },
+      data: { lastCheckedAt: new Date(), status: "NEEDS_RECONNECT", lastError: `Instagram login needs renewing: ${(err as Error).message}`.slice(0, 500) },
+    });
+  }
 }

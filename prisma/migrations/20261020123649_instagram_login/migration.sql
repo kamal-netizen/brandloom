@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "IgConnection" ADD COLUMN     "loginType" TEXT NOT NULL DEFAULT 'FACEBOOK',
+ADD COLUMN     "tokenExpiresAt" TIMESTAMP(3),
+ALTER COLUMN "fbPageId" DROP NOT NULL,
+ALTER COLUMN "fbPageName" DROP NOT NULL;

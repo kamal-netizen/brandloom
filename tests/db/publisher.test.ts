@@ -155,3 +155,26 @@ describe("publisher step machine", () => {
     expect(ig.calls.create).toBe(0);
   });
 });
+
+describe("Instagram-login connections", () => {
+  it("publish through the same step machine (no Facebook Page)", async () => {
+    const brand = await db.brand.create({ data: { slug: "scoopsmonster", name: "Scoops Monster" } });
+    await db.igConnection.create({
+      data: {
+        brandId: brand.id, loginType: "INSTAGRAM", igUserId: "1784", igUsername: "scoopsmonster",
+        pageTokenEnc: (await import("@/lib/crypto")).encrypt("page-token"), tokenExpiresAt: new Date(Date.now() + 50 * 86_400_000),
+      },
+    });
+    const post = await duePost(brand.id);
+    const ig = fakeGraph();
+    const r = await tick({ graph: ig.graph, instance: "ig", sleep: noSleep });
+    expect(r.results[post.id]).toBe("published");
+    expect(ig.calls.publish).toBe(1);
+  });
+
+  it("picks graph.instagram.com for them and graph.facebook.com otherwise", async () => {
+    const { graphFor, igGraph, graph } = await import("@/lib/meta/graph");
+    expect(graphFor({ loginType: "INSTAGRAM" })).toBe(igGraph);
+    expect(graphFor({ loginType: "FACEBOOK" })).toBe(graph);
+  });
+});

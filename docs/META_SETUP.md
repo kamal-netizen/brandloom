@@ -95,6 +95,29 @@ Each brand page then shows **Connected as @handle**.
 
 ---
 
+## Accounts with no Facebook Page: Instagram login
+
+Scoops Monster and ProScience only exist on Instagram. Facebook Login can only reach an Instagram
+account through its Facebook Page, so for these Brandloom uses Meta's second official route,
+**Instagram API with Instagram Login**, through the same Meta app's Instagram product.
+
+1. App dashboard → **Use cases → Instagram API → API setup with Instagram login**.
+   - Note the **Instagram app ID** (not secret) and the **Instagram app secret** (Show).
+   - **Permissions and features**: add `instagram_business_basic` and `instagram_business_content_publish`.
+   - **Set up Instagram business login → Business login settings → OAuth redirect URIs**:
+     `https://brandloom.srv1867587.hstgr.cloud/api/meta/ig-callback`
+2. While the app is in Development mode, each account must be an **Instagram Tester**:
+   App roles → Roles → Instagram Testers → Add → the username; then in that Instagram account,
+   **Settings → Website permissions → Apps and websites → Tester invites → Accept**.
+3. Shipyard env vars: `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` (runtime). Redeploy.
+4. Brandloom → the brand → **Connect with Instagram** → log in to *that brand's* Instagram account
+   (instagram.com remembers one login per browser — check the account name before you allow).
+
+These tokens last 60 days; Brandloom renews them automatically while they are valid. If one lapses
+the brand shows **Needs reconnect** and the fix is Connect with Instagram again.
+
+---
+
 ## Later: when Brandloom asks you to "Reconnect"
 
 Page tokens don't expire on a timer, but they stop working if you change your Facebook password,

@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { db } from "@/lib/db";
 import { publicUrl } from "@/lib/media-store";
 import { metaConfigured } from "@/lib/meta/oauth";
+import { igConfigured } from "@/lib/meta/ig-oauth";
 import { deleteHashtagSetAction, disconnectAction, saveBrandAction, saveHashtagSetAction } from "@/app/actions/brands";
 import { Notice, PageHeader } from "@/components/ui";
 import { formatDubai, requestNow } from "@/lib/time";
@@ -155,7 +156,9 @@ export default async function BrandPage({
                   {c.igProfilePicUrl ? <img src={c.igProfilePicUrl} alt="" className="h-11 w-11 rounded-full" /> : <span className="h-11 w-11 rounded-full bg-zinc-700" />}
                   <div>
                     <div className="font-medium">@{c.igUsername}</div>
-                    <div className="text-xs text-muted">via Facebook Page “{c.fbPageName}”</div>
+                    <div className="text-xs text-muted">
+                      {c.loginType === "INSTAGRAM" ? "via Instagram login (no Facebook Page)" : `via Facebook Page “${c.fbPageName}”`}
+                    </div>
                   </div>
                 </div>
                 {c.status === "NEEDS_RECONNECT" && <Notice tone="error">{c.lastError ?? "The connection needs to be renewed."}</Notice>}
@@ -168,6 +171,12 @@ export default async function BrandPage({
                   </dd>
                   <dt className="text-muted">Last checked</dt>
                   <dd>{c.lastCheckedAt ? formatDubai(c.lastCheckedAt) : "not yet"}</dd>
+                  {c.tokenExpiresAt && (
+                    <>
+                      <dt className="text-muted">Login valid until</dt>
+                      <dd>{formatDubai(c.tokenExpiresAt, { withYear: true })} · auto-renews</dd>
+                    </>
+                  )}
                   {c.dataAccessExpiresAt && (
                     <>
                       <dt className="text-muted">Data access until</dt>
@@ -176,7 +185,7 @@ export default async function BrandPage({
                   )}
                 </dl>
                 <div className="flex gap-2">
-                  <a href={`/api/meta/connect?brand=${slug}`} className="btn-ghost">
+                  <a href={c.loginType === "INSTAGRAM" ? `/api/meta/ig-connect?brand=${slug}` : `/api/meta/connect?brand=${slug}`} className="btn-ghost">
                     Reconnect
                   </a>
                   <form action={disconnectAction}>
@@ -188,16 +197,27 @@ export default async function BrandPage({
             ) : (
               <>
                 <p className="text-sm text-muted">
-                  Log in with the Facebook account that manages {brand.name}&apos;s Page. The Instagram account must be a professional (Business or Creator) account
-                  linked to that Page.
+                  The Instagram account must be a professional (Business or Creator) account. Use <b>Facebook</b> if it is linked to {brand.name}&apos;s Facebook
+                  Page, <b>Instagram</b> if it has no Page.
                 </p>
-                {metaConfigured() ? (
-                  <a href={`/api/meta/connect?brand=${slug}`} className="btn-primary">
-                    Connect Instagram
-                  </a>
-                ) : (
-                  <Notice tone="warn">The Meta app is not configured yet (META_APP_ID / META_APP_SECRET). Follow docs/META_SETUP.md.</Notice>
+                <div className="flex flex-wrap gap-2">
+                  {metaConfigured() && (
+                    <a href={`/api/meta/connect?brand=${slug}`} className="btn-primary">
+                      Connect with Facebook
+                    </a>
+                  )}
+                  {igConfigured() && (
+                    <a href={`/api/meta/ig-connect?brand=${slug}`} className="btn-ghost">
+                      Connect with Instagram
+                    </a>
+                  )}
+                </div>
+                {!metaConfigured() && !igConfigured() && (
+                  <Notice tone="warn">The Meta app is not configured yet (META_* / INSTAGRAM_* env vars). Follow docs/META_SETUP.md.</Notice>
                 )}
+                <p className="text-xs text-muted">
+                  Instagram login connects whichever account is signed in at instagram.com — check it is {brand.name}&apos;s before you allow.
+                </p>
               </>
             )}
           </section>

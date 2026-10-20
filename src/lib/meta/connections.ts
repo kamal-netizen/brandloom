@@ -45,6 +45,8 @@ export async function bindPage(brandId: string, page: PageWithIg, userTokenExpir
   if (other) throw new ConnectError(`@${page.ig.username} is already connected to ${other.brand.name}.`);
 
   const data = {
+    loginType: "FACEBOOK",
+    tokenExpiresAt: null,
     igUserId: page.ig.id,
     igUsername: page.ig.username,
     igProfilePicUrl: page.ig.profilePic ?? null,
@@ -60,4 +62,40 @@ export async function bindPage(brandId: string, page: PageWithIg, userTokenExpir
   await db.igConnection.upsert({ where: { brandId }, create: { brandId, ...data }, update: data });
   // The brand's handle follows the account actually connected.
   await db.brand.update({ where: { id: brandId }, data: { igHandle: page.ig.username } });
+}
+
+/** Binds an Instagram-login account (no Facebook Page) to a brand. */
+export async function bindInstagram(
+  brandId: string,
+  account: { id: string; username: string; profilePic?: string; accountType?: string },
+  token: string,
+  expiresAt: Date,
+  userId: string
+) {
+  if (account.accountType && !["BUSINESS", "MEDIA_CREATOR", "CREATOR"].includes(account.accountType)) {
+    throw new ConnectError(`@${account.username} is a personal account; switch it to a professional (Business) account in Instagram first.`);
+  }
+  const other = await db.igConnection.findFirst({
+    where: { igUserId: account.id, brandId: { not: brandId }, status: { not: "DISCONNECTED" } },
+    include: { brand: true },
+  });
+  if (other) throw new ConnectError(`@${account.username} is already connected to ${other.brand.name}.`);
+
+  const data = {
+    loginType: "INSTAGRAM",
+    igUserId: account.id,
+    igUsername: account.username,
+    igProfilePicUrl: account.profilePic ?? null,
+    fbPageId: null,
+    fbPageName: null,
+    pageTokenEnc: encrypt(token),
+    tokenExpiresAt: expiresAt,
+    userTokenExpiresAt: null,
+    status: "CONNECTED",
+    lastError: null,
+    lastCheckedAt: null,
+    connectedByUserId: userId,
+  };
+  await db.igConnection.upsert({ where: { brandId }, create: { brandId, ...data }, update: data });
+  await db.brand.update({ where: { id: brandId }, data: { igHandle: account.username } });
 }

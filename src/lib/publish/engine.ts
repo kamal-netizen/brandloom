@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
 import { publicUrl } from "@/lib/media-store";
-import { graph as realGraph, GraphError, type Graph } from "@/lib/meta/graph";
+import { graphFor, GraphError, type Graph } from "@/lib/meta/graph";
 
 /**
  * The publisher: a resumable step machine per post.
@@ -33,17 +33,18 @@ const DEFER_IN_PROGRESS_MS = 20_000;
 const DEFER_QUOTA_MS = 60 * 60_000;
 
 export type EngineDeps = {
+  /** Override for tests; by default each connection gets its own host (graphFor). */
   graph?: Graph;
   instance?: string;
   sleep?: (ms: number) => Promise<void>;
   dailyCap?: number;
 };
 
-type Ctx = Required<EngineDeps>;
+type Ctx = Required<Omit<EngineDeps, "graph">> & { graph: Graph | null };
 
 function ctx(deps: EngineDeps = {}): Ctx {
   return {
-    graph: deps.graph ?? realGraph,
+    graph: deps.graph ?? null,
     instance: deps.instance ?? INSTANCE,
     sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
     dailyCap: deps.dailyCap ?? Number(process.env.PUBLISH_DAILY_CAP || 25),
@@ -208,6 +209,7 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
     return "failed";
   }
   const token = decrypt(conn.pageTokenEnc);
+  const api = c.graph ?? graphFor(conn);
   const ig = conn.igUserId;
   const story = post.type === "STORY";
 
@@ -217,7 +219,7 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
   for (let guard = 0; guard < 8; guard++) {
     if (step === "NONE") {
       const id = await logged(c, post.id, "CREATE_CONTAINER", () =>
-        c.graph.createImageContainer(ig, token, { imageUrl: publicUrl(media.rendition.key), caption: post.caption, story })
+        api.createImageContainer(ig, token, { imageUrl: publicUrl(media.rendition.key), caption: post.caption, story })
       );
       await owned(c, post.id, { igContainerId: id, publishStep: "CONTAINER_CREATED" });
       containerId = id;
@@ -229,7 +231,7 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
       let status = "IN_PROGRESS";
       let detail: string | undefined;
       for (let i = 0; i < POLL_TRIES; i++) {
-        const s = await logged(c, post.id, "CONTAINER_STATUS", () => c.graph.containerStatus(containerId!, token), containerId);
+        const s = await logged(c, post.id, "CONTAINER_STATUS", () => api.containerStatus(containerId!, token), containerId);
         status = s.status;
         detail = s.detail;
         if (status !== "IN_PROGRESS") break;
@@ -261,7 +263,7 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
         await defer(c, post.id, DEFER_QUOTA_MS, `Daily cap of ${c.dailyCap} posts reached for this brand; waiting.`);
         return "deferred";
       }
-      const limit = await c.graph.publishingLimit(ig, token).catch(() => null);
+      const limit = await api.publishingLimit(ig, token).catch(() => null);
       if (limit && limit.used >= limit.total) {
         await defer(c, post.id, DEFER_QUOTA_MS, `Instagram's ${limit.total}-posts-per-24h limit reached; waiting.`);
         return "deferred";
@@ -271,7 +273,7 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
       await owned(c, post.id, { publishStep: "PUBLISH_CALLED" });
       let mediaId: string;
       try {
-        mediaId = await logged(c, post.id, "PUBLISH", () => c.graph.publish(ig, token, containerId!), containerId);
+        mediaId = await logged(c, post.id, "PUBLISH", () => api.publish(ig, token, containerId!), containerId);
       } catch (err) {
         // A definite 4xx refusal means nothing was published: go back a step
         // so a retry may publish. Network errors / 5xx are ambiguous and stay
@@ -281,24 +283,24 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
         }
         throw err;
       }
-      await finish(c, post.id, mediaId, token);
+      await finish(c, api, post.id, mediaId, token);
       return "published";
     }
 
     if (step === "PUBLISH_CALLED") {
       // Resumed after an interrupted or ambiguous publish: ask, don't repeat.
-      const s = await logged(c, post.id, "VERIFY", () => c.graph.containerStatus(containerId!, token), containerId);
+      const s = await logged(c, post.id, "VERIFY", () => api.containerStatus(containerId!, token), containerId);
       if (s.status === "PUBLISHED") {
         const lastPublish = await db.publishAttempt.findFirst({
           where: { postId: post.id, step: "PUBLISH" },
           orderBy: { startedAt: "desc" },
         });
         const after = (lastPublish?.startedAt ?? post.updatedAt).getTime() - 2 * 60_000;
-        const recent = await c.graph.recentMedia(ig, token, 10).catch(() => []);
+        const recent = await api.recentMedia(ig, token, 10).catch(() => []);
         const match = recent
           .filter((m) => new Date(m.timestamp).getTime() >= after)
           .sort((a, b) => a.timestamp.localeCompare(b.timestamp))[0];
-        await finish(c, post.id, match?.id ?? null, token, match?.permalink);
+        await finish(c, api, post.id, match?.id ?? null, token, match?.permalink);
         return "published";
       }
       if (s.status === "FINISHED") {
@@ -323,9 +325,9 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
   return "deferred";
 }
 
-async function finish(c: Ctx, id: string, mediaId: string | null, token: string, knownPermalink?: string) {
+async function finish(c: Ctx, api: Graph, id: string, mediaId: string | null, token: string, knownPermalink?: string) {
   let permalink = knownPermalink ?? null;
-  if (mediaId && !permalink) permalink = await c.graph.permalink(mediaId, token).catch(() => null);
+  if (mediaId && !permalink) permalink = await api.permalink(mediaId, token).catch(() => null);
   await owned(c, id, {
     status: "PUBLISHED",
     publishStep: "DONE",

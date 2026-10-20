@@ -118,17 +118,24 @@ model HashtagSet {
   @@unique([brandId, name])
 }
 
-/// One Instagram professional account per brand, reached through its Facebook Page.
+/// One Instagram professional account per brand. Two ways in:
+///  FACEBOOK  — Instagram API with Facebook Login: through the linked Facebook
+///              Page, Page token (no fixed expiry), graph.facebook.com.
+///  INSTAGRAM — Instagram API with Instagram Login: for accounts with no
+///              Facebook Page, 60-day user token refreshed by the scheduler,
+///              graph.instagram.com.
 model IgConnection {
   id                  String    @id @default(cuid())
   brandId             String    @unique
   brand               Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  loginType           String    @default("FACEBOOK") // FACEBOOK | INSTAGRAM
   igUserId            String
   igUsername          String
   igProfilePicUrl     String?
-  fbPageId            String
-  fbPageName          String
-  pageTokenEnc        String // AES-256-GCM, src/lib/crypto.ts
+  fbPageId            String?
+  fbPageName          String?
+  pageTokenEnc        String // the access token, AES-256-GCM (src/lib/crypto.ts); a Page token or an Instagram user token
+  tokenExpiresAt      DateTime? // INSTAGRAM tokens only
   userTokenExpiresAt  DateTime?
   dataAccessExpiresAt DateTime?
   scopes              String    @default("")

@@ -9,7 +9,9 @@
  * stand in a fake Instagram.
  */
 export const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v24.0";
-const GRAPH = "https://graph.facebook.com";
+export const FB_GRAPH = "https://graph.facebook.com";
+/** Instagram API with Instagram Login: same endpoints, Instagram's own host and tokens. */
+export const IG_GRAPH = "https://graph.instagram.com";
 const TIMEOUT_MS = 30_000;
 
 /** Codes Meta documents as temporary / throttling, plus our own -1 for network failure. */
@@ -41,10 +43,11 @@ export class GraphError extends Error {
 
 type Params = Record<string, string | number | undefined>;
 
-export async function graphCall<T>(method: "GET" | "POST", path: string, params: Params): Promise<T> {
+export async function graphCall<T>(method: "GET" | "POST", path: string, params: Params, host = FB_GRAPH): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined) qs.set(k, String(v));
-  const url = `${GRAPH}/${GRAPH_VERSION}/${path.replace(/^\//, "")}`;
+  // Absolute URLs (api.instagram.com's token exchange) pass through unversioned.
+  const url = /^https:\/\//.test(path) ? path : `${host}/${GRAPH_VERSION}/${path.replace(/^\//, "")}`;
   let res: Response;
   try {
     res =
@@ -81,9 +84,12 @@ export interface Graph {
   publishingLimit(igUserId: string, token: string): Promise<{ used: number; total: number } | null>;
 }
 
-export const graph: Graph = {
+/** A Graph client bound to one host. */
+export function makeGraph(host: string): Graph {
+  const call = <T>(method: "GET" | "POST", path: string, params: Params): Promise<T> => graphCall<T>(method, path, params, host);
+  return {
   async createImageContainer(igUserId, token, { imageUrl, caption, story }) {
-    const r = await graphCall<{ id: string }>("POST", `${igUserId}/media`, {
+    const r = await call<{ id: string }>("POST", `${igUserId}/media`, {
       image_url: imageUrl,
       // Stories take no caption; sending one is an error on some versions.
       caption: story ? undefined : caption,
@@ -93,22 +99,22 @@ export const graph: Graph = {
     return r.id;
   },
   async containerStatus(containerId, token) {
-    const r = await graphCall<{ status_code: ContainerStatus; status?: string }>("GET", containerId, {
+    const r = await call<{ status_code: ContainerStatus; status?: string }>("GET", containerId, {
       fields: "status_code,status",
       access_token: token,
     });
     return { status: r.status_code, detail: r.status };
   },
   async publish(igUserId, token, containerId) {
-    const r = await graphCall<{ id: string }>("POST", `${igUserId}/media_publish`, { creation_id: containerId, access_token: token });
+    const r = await call<{ id: string }>("POST", `${igUserId}/media_publish`, { creation_id: containerId, access_token: token });
     return r.id;
   },
   async permalink(mediaId, token) {
-    const r = await graphCall<{ permalink?: string }>("GET", mediaId, { fields: "permalink", access_token: token });
+    const r = await call<{ permalink?: string }>("GET", mediaId, { fields: "permalink", access_token: token });
     return r.permalink ?? null;
   },
   async recentMedia(igUserId, token, limit = 10) {
-    const r = await graphCall<{ data: { id: string; timestamp: string; permalink?: string }[] }>("GET", `${igUserId}/media`, {
+    const r = await call<{ data: { id: string; timestamp: string; permalink?: string }[] }>("GET", `${igUserId}/media`, {
       fields: "id,timestamp,permalink",
       limit,
       access_token: token,
@@ -116,7 +122,7 @@ export const graph: Graph = {
     return r.data ?? [];
   },
   async publishingLimit(igUserId, token) {
-    const r = await graphCall<{ data?: { quota_usage?: number; config?: { quota_total?: number } }[] }>(
+    const r = await call<{ data?: { quota_usage?: number; config?: { quota_total?: number } }[] }>(
       "GET",
       `${igUserId}/content_publishing_limit`,
       { fields: "config,quota_usage", access_token: token }
@@ -125,4 +131,13 @@ export const graph: Graph = {
     if (!row) return null;
     return { used: row.quota_usage ?? 0, total: row.config?.quota_total ?? 100 };
   },
-};
+  };
+}
+
+export const graph: Graph = makeGraph(FB_GRAPH);
+export const igGraph: Graph = makeGraph(IG_GRAPH);
+
+/** The client for a connection: Instagram-login accounts live on graph.instagram.com. */
+export function graphFor(conn: { loginType: string }): Graph {
+  return conn.loginType === "INSTAGRAM" ? igGraph : graph;
+}

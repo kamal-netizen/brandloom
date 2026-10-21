@@ -6,7 +6,7 @@
  *
  *   brandloom whoami
  *   brandloom brands
- *   brandloom post --brand corechamps --type feed --file poster.jpg
+ *   brandloom post --brand corechamps --type feed|story|reel --file poster.jpg|reel.mp4
  *                  (--caption "…" | --caption-file caption.txt) [--hashtags default|<set>]
  *                  [--platforms instagram|facebook|instagram,facebook]   (default instagram)
  *                  [--at "2026-10-20 19:00" | --at 2026-10-20T19:00+04:00 | --now] [--draft]
@@ -30,7 +30,7 @@ import { openAsBlob } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+const MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4", ".mov": "video/quicktime" };
 
 class CliError extends Error {
   constructor(message, code = 2) {
@@ -119,7 +119,7 @@ function out(opt, data, human) {
 async function cmdPost(opt) {
   if (!opt.brand) throw new CliError("--brand is required");
   const type = String(opt.type || "").toLowerCase();
-  if (type !== "feed" && type !== "story") throw new CliError("--type must be feed or story");
+  if (type !== "feed" && type !== "story" && type !== "reel") throw new CliError("--type must be feed, story or reel");
   const files = opt.file ?? [];
   if (files.length !== 1) throw new CliError("pass exactly one --file");
   if (opt.caption && opt["caption-file"]) throw new CliError("use --caption or --caption-file, not both");
@@ -142,7 +142,7 @@ async function cmdPost(opt) {
   const hash = createHash("sha256").update(`${opt.brand}\n${type}\n${caption}\n${opt.at ?? ""}\n${opt.now ? "now" : ""}\n`);
   for (const f of files) {
     const mime = MIME[path.extname(f).toLowerCase()];
-    if (!mime) throw new CliError(`${f}: only .png, .jpg, .jpeg, .webp`);
+    if (!mime) throw new CliError(`${f}: only .png, .jpg, .jpeg, .webp (or .mp4 / .mov for a reel)`);
     let bytes;
     try {
       bytes = await readFile(f);

@@ -16,10 +16,17 @@ export function PhonePreview({
   className?: string;
 }) {
   const name = handle ? handle.replace(/^@/, "") : "brand";
-  if (type === "STORY") {
+  if (type === "STORY" || type === "REEL") {
+    const video = imageUrl && (/\.(mp4|mov)(\?|$)/i.test(imageUrl) || imageUrl.startsWith("blob:") && type === "REEL");
     return (
       <div className={cn("relative mx-auto aspect-[9/16] w-full max-w-[280px] overflow-hidden rounded-[28px] border-4 border-zinc-800 bg-black", className)}>
-        {imageUrl ? <img src={imageUrl} alt="" className="h-full w-full object-cover" /> : <Placeholder />}
+        {video ? (
+          <video src={imageUrl!} className="h-full w-full object-cover" muted loop autoPlay playsInline />
+        ) : imageUrl ? (
+          <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <Placeholder />
+        )}
         <div className="absolute inset-x-3 top-3 h-0.5 rounded bg-white/50" />
         <div className="absolute left-3 top-6 flex items-center gap-2 text-xs font-semibold text-white drop-shadow">
           <span className="h-6 w-6 rounded-full bg-white/30" />

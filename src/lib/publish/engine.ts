@@ -216,6 +216,7 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
       await fail(c, post.id, `${post.brand.name} has no Facebook Page connected (it is connected through Instagram login), so it cannot post to Facebook.`);
       return "failed";
     }
+    if (post.type === "REEL") return runFacebookReel(c, post, conn.fbPageId, token, publicUrl(media.rendition.key), c.graph ?? graphFor(conn));
     return runFacebook(c, post, conn.fbPageId, token, publicUrl(media.rendition.key), story, c.graph ?? graphFor(conn));
   }
 
@@ -228,7 +229,9 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
   for (let guard = 0; guard < 8; guard++) {
     if (step === "NONE") {
       const id = await logged(c, post.id, "CREATE_CONTAINER", () =>
-        api.createImageContainer(ig, token, { imageUrl: publicUrl(media.rendition.key), caption: post.caption, story })
+        post.type === "REEL"
+          ? api.createReelContainer(ig, token, { videoUrl: publicUrl(media.rendition.key), caption: post.caption, shareToFeed: true })
+          : api.createImageContainer(ig, token, { imageUrl: publicUrl(media.rendition.key), caption: post.caption, story })
       );
       await owned(c, post.id, { igContainerId: id, publishStep: "CONTAINER_CREATED" });
       containerId = id;
@@ -398,6 +401,82 @@ async function runFacebook(
   }
   await finish(c, api, post.id, postId || null, token, undefined, true);
   return "published";
+}
+
+/**
+ * Facebook Page reel: start (video id) -> upload by URL (Facebook pulls our
+ * public file) -> finish with video_state=PUBLISHED -> poll until complete.
+ * The video id is saved before anything else, and PUBLISH_CALLED before the
+ * finish call; a resumed run at PUBLISH_CALLED only asks the video's status
+ * (complete / still processing / error) and never calls finish again.
+ */
+async function runFacebookReel(
+  c: Ctx,
+  post: { id: string; caption: string; publishStep: string; igContainerId: string | null; brandId: string },
+  pageId: string,
+  token: string,
+  videoUrl: string,
+  api: Graph
+): Promise<AdvanceResult> {
+  let step = post.publishStep;
+  let videoId = post.igContainerId;
+
+  if (step === "PUBLISH_CALLED" && videoId) {
+    const s = await logged(c, post.id, "FB_REEL_STATUS", () => api.fbReelStatus(videoId!, token), videoId);
+    if (s.state === "complete") {
+      await finish(c, api, post.id, videoId, token, s.permalink, true);
+      return "published";
+    }
+    if (s.state === "processing") {
+      await defer(c, post.id, DEFER_IN_PROGRESS_MS);
+      return "deferred";
+    }
+    await fail(c, post.id, `Facebook rejected the reel: ${s.detail ?? "processing error"}.`);
+    return "failed";
+  }
+
+  const since = new Date(Date.now() - 24 * 60 * 60_000);
+  const ours = await db.post.count({ where: { brandId: post.brandId, platform: "FACEBOOK", status: "PUBLISHED", publishedAt: { gte: since } } });
+  if (ours >= c.dailyCap) {
+    await defer(c, post.id, DEFER_QUOTA_MS, `Daily cap of ${c.dailyCap} Facebook posts reached for this brand; waiting.`);
+    return "deferred";
+  }
+
+  if (step === "CONTAINER_CREATED") {
+    // Interrupted between start and upload: the upload URL was not kept, so begin again.
+    await owned(c, post.id, { igContainerId: null, publishStep: "NONE" });
+    step = "NONE";
+    videoId = null;
+  }
+  if (step === "NONE" || !videoId) {
+    const started = await logged(c, post.id, "FB_REEL_START", () => api.fbReelStart(pageId, token));
+    videoId = started.videoId;
+    await owned(c, post.id, { igContainerId: videoId, publishStep: "CONTAINER_CREATED" });
+    await logged(c, post.id, "FB_REEL_UPLOAD", () => api.fbReelUpload(started.uploadUrl, token, videoUrl), videoId);
+    await owned(c, post.id, { publishStep: "CONTAINER_READY" });
+  }
+
+  await owned(c, post.id, { publishStep: "PUBLISH_CALLED" });
+  try {
+    await logged(c, post.id, "FB_PUBLISH", () => api.fbReelFinish(pageId, token, videoId!, post.caption), videoId);
+  } catch (err) {
+    if (err instanceof GraphError && !err.transient && err.httpStatus >= 400 && err.httpStatus < 500) {
+      await owned(c, post.id, { publishStep: "CONTAINER_READY" });
+    }
+    throw err;
+  }
+  // Facebook processes the video after finish; the status poll (now, then on later ticks) completes it.
+  const s = await logged(c, post.id, "FB_REEL_STATUS", () => api.fbReelStatus(videoId!, token), videoId);
+  if (s.state === "complete") {
+    await finish(c, api, post.id, videoId!, token, s.permalink, true);
+    return "published";
+  }
+  if (s.state === "error") {
+    await fail(c, post.id, `Facebook rejected the reel: ${s.detail ?? "processing error"}.`);
+    return "failed";
+  }
+  await defer(c, post.id, DEFER_IN_PROGRESS_MS);
+  return "deferred";
 }
 
 async function finish(c: Ctx, api: Graph, id: string, mediaId: string | null, token: string, knownPermalink?: string, facebook = false) {

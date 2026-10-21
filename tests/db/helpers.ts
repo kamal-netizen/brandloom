@@ -51,7 +51,10 @@ export async function duePost(brandId: string, extra: Record<string, unknown> = 
 export function fakeGraph() {
   const containers = new Map<string, { status: ContainerStatus; caption?: string }>();
   const media: { id: string; timestamp: string; permalink: string; container: string }[] = [];
-  const calls = { create: 0, status: 0, publish: 0, fbPhoto: 0, fbStory: 0 };
+  const calls = { create: 0, status: 0, publish: 0, fbPhoto: 0, fbStory: 0, reel: 0, fbReelStart: 0, fbReelUpload: 0, fbReelFinish: 0, fbReelStatus: 0 };
+  /** How many status polls a new reel container / Facebook reel stays "processing" for. */
+  let reelProcessingPolls = 0;
+  const fbReels = new Map<string, { polls: number; finished: boolean; description?: string }>();
   const fbPosts: { id: string; time: string; permalink: string; story: boolean; message?: string }[] = [];
   let fbLoseResponse = false;
   let seq = 0;
@@ -66,10 +69,19 @@ export function fakeGraph() {
       containers.set(id, { status: createStatus, caption });
       return id;
     },
+    async createReelContainer(_ig, token, { caption }) {
+      if (token !== "page-token") throw new GraphError("bad token", 400, 190);
+      calls.create++;
+      calls.reel++;
+      const id = `r${++seq}`;
+      containers.set(id, { status: reelProcessingPolls ? "IN_PROGRESS" : "FINISHED", caption, pending: reelProcessingPolls } as never);
+      return id;
+    },
     async containerStatus(id) {
       calls.status++;
-      const c = containers.get(id);
+      const c = containers.get(id) as { status: ContainerStatus; pending?: number } | undefined;
       if (!c) throw new GraphError("no container", 400, 100);
+      if (c.status === "IN_PROGRESS" && c.pending !== undefined && --c.pending <= 0) c.status = "FINISHED";
       return { status: c.status };
     },
     async publish(_ig, _t, id) {
@@ -114,6 +126,28 @@ export function fakeGraph() {
     async fbRecent(_page, _token, story) {
       return fbPosts.filter((p) => p.story === story).reverse();
     },
+    async fbReelStart() {
+      calls.fbReelStart++;
+      const id = `v${++seq}`;
+      fbReels.set(id, { polls: reelProcessingPolls, finished: false });
+      return { videoId: id, uploadUrl: `https://rupload.example/${id}` };
+    },
+    async fbReelUpload() {
+      calls.fbReelUpload++;
+    },
+    async fbReelFinish(_page, _token, videoId, description) {
+      calls.fbReelFinish++;
+      const r = fbReels.get(videoId)!;
+      r.finished = true;
+      r.description = description;
+    },
+    async fbReelStatus(videoId) {
+      calls.fbReelStatus++;
+      const r = fbReels.get(videoId)!;
+      if (!r.finished) return { state: "processing" };
+      if (r.polls-- > 0) return { state: "processing" };
+      return { state: "complete", permalink: `https://www.facebook.com/reel/${videoId}` };
+    },
   };
   return {
     graph,
@@ -121,6 +155,10 @@ export function fakeGraph() {
     media,
     containers,
     fbPosts,
+    fbReels,
+    set reelProcessingPolls(v: number) {
+      reelProcessingPolls = v;
+    },
     set fbLoseResponse(v: boolean) {
       fbLoseResponse = v;
     },

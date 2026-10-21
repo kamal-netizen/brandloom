@@ -14,7 +14,7 @@ export default async function NewPostPage({ searchParams }: { searchParams: Prom
       hashtagSets: { orderBy: { name: "asc" } },
       connection: { select: { status: true, loginType: true, fbPageId: true } },
       assets: {
-        where: { kind: "IMAGE" },
+        where: { kind: { in: ["IMAGE", "VIDEO"] } },
         orderBy: { createdAt: "desc" },
         take: 48,
         include: { renditions: { where: { purpose: "THUMB" } } },

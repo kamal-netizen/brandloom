@@ -29,6 +29,12 @@ export function proxy(request: NextRequest) {
   return NextResponse.redirect(login);
 }
 
+/**
+ * The upload and media routes skip the proxy entirely: Next buffers every
+ * body that passes through proxy and cuts it at 10 MB (proxyClientMaxBodySize),
+ * which would truncate a reel. Those routes check their own auth (bearer
+ * token, admin session) or are public by design.
+ */
 export const config = {
-  matcher: ["/((?!_next/|favicon.ico|icon.png|.*\\.(?:svg|png|jpe?g|webp|ico|txt)$).*)"],
+  matcher: ["/((?!_next/|api/v1/|api/assets|api/media/|m/|favicon.ico|icon.png|.*\\.(?:svg|png|jpe?g|webp|ico|txt|mp4|mov)$).*)"],
 };

@@ -77,6 +77,8 @@ export type ContainerStatus = "EXPIRED" | "ERROR" | "FINISHED" | "IN_PROGRESS" |
 /** The Instagram operations the publisher needs. */
 export interface Graph {
   createImageContainer(igUserId: string, token: string, args: { imageUrl: string; caption?: string; story?: boolean }): Promise<string>;
+  /** Instagram reel container (media_type=REELS). Video processing can take minutes: poll containerStatus. */
+  createReelContainer(igUserId: string, token: string, args: { videoUrl: string; caption?: string; shareToFeed: boolean }): Promise<string>;
   containerStatus(containerId: string, token: string): Promise<{ status: ContainerStatus; detail?: string }>;
   publish(igUserId: string, token: string, containerId: string): Promise<string>;
   permalink(mediaId: string, token: string): Promise<string | null>;
@@ -91,6 +93,13 @@ export interface Graph {
   fbPermalink(postId: string, token: string): Promise<string | null>;
   /** Most recent Page feed posts or stories, for verifying an interrupted publish. */
   fbRecent(pageId: string, token: string, story: boolean): Promise<{ id: string; time: string; permalink?: string }[]>;
+
+  // ---- Facebook Page reels: start -> upload by URL -> finish (publish) -> poll ----
+  fbReelStart(pageId: string, token: string): Promise<{ videoId: string; uploadUrl: string }>;
+  fbReelUpload(uploadUrl: string, token: string, fileUrl: string): Promise<void>;
+  fbReelFinish(pageId: string, token: string, videoId: string, description: string): Promise<void>;
+  /** complete = published on the Page; processing = ask again later; error = Facebook rejected it. */
+  fbReelStatus(videoId: string, token: string): Promise<{ state: "complete" | "processing" | "error"; detail?: string; permalink?: string }>;
 }
 
 /** A Graph client bound to one host. */
@@ -103,6 +112,16 @@ export function makeGraph(host: string): Graph {
       // Stories take no caption; sending one is an error on some versions.
       caption: story ? undefined : caption,
       media_type: story ? "STORIES" : undefined,
+      access_token: token,
+    });
+    return r.id;
+  },
+  async createReelContainer(igUserId, token, { videoUrl, caption, shareToFeed }) {
+    const r = await call<{ id: string }>("POST", `${igUserId}/media`, {
+      media_type: "REELS",
+      video_url: videoUrl,
+      caption,
+      share_to_feed: shareToFeed ? "true" : "false",
       access_token: token,
     });
     return r.id;
@@ -162,6 +181,51 @@ export function makeGraph(host: string): Graph {
       access_token: token,
     });
     return (r.data ?? []).map((x) => ({ id: x.id, time: new Date(x.created_time).toISOString(), permalink: x.permalink_url }));
+  },
+  async fbReelStart(pageId, token) {
+    const r = await call<{ video_id: string; upload_url: string }>("POST", `${pageId}/video_reels`, { upload_phase: "start", access_token: token });
+    return { videoId: r.video_id, uploadUrl: r.upload_url };
+  },
+  async fbReelUpload(uploadUrl, token, fileUrl) {
+    let res: Response;
+    try {
+      res = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { Authorization: `OAuth ${token}`, file_url: fileUrl },
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (err) {
+      throw new GraphError(`network: ${(err as Error).message}`, 0, -1);
+    }
+    const body = (await res.json().catch(() => ({}))) as { success?: boolean; debug_info?: { message?: string } };
+    if (!res.ok || body.success === false) {
+      throw new GraphError(body.debug_info?.message ?? `Facebook reel upload failed (HTTP ${res.status})`, res.status, -1);
+    }
+  },
+  async fbReelFinish(pageId, token, videoId, description) {
+    await call("POST", `${pageId}/video_reels`, {
+      upload_phase: "finish",
+      video_id: videoId,
+      video_state: "PUBLISHED",
+      description,
+      access_token: token,
+    });
+  },
+  async fbReelStatus(videoId, token) {
+    const r = await call<{
+      status?: {
+        video_status?: string;
+        processing_phase?: { status?: string; error?: { message?: string } };
+        publishing_phase?: { status?: string; publish_status?: string; error?: { message?: string } };
+      };
+      permalink_url?: string;
+    }>("GET", videoId, { fields: "status,permalink_url", access_token: token });
+    const s = r.status ?? {};
+    const err = s.processing_phase?.error?.message ?? s.publishing_phase?.error?.message;
+    const permalink = r.permalink_url ? (r.permalink_url.startsWith("http") ? r.permalink_url : `https://www.facebook.com${r.permalink_url}`) : undefined;
+    if (s.video_status === "error" || err) return { state: "error", detail: err ?? "Facebook could not process the video", permalink };
+    if (s.publishing_phase?.status === "complete") return { state: "complete", permalink };
+    return { state: "processing", permalink };
   },
   async publishingLimit(igUserId, token) {
     const r = await call<{ data?: { quota_usage?: number; config?: { quota_total?: number } }[] }>(

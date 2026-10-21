@@ -19,7 +19,7 @@ export const POST_STATUSES = [
 ] as const;
 export type PostStatus = (typeof POST_STATUSES)[number];
 
-export const POST_TYPES = ["FEED", "STORY"] as const; // REEL / CAROUSEL: later phase
+export const POST_TYPES = ["FEED", "STORY", "REEL"] as const; // CAROUSEL: later phase
 
 export const PLATFORMS = ["INSTAGRAM", "FACEBOOK"] as const;
 export type Platform = (typeof PLATFORMS)[number];

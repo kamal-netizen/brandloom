@@ -10,6 +10,8 @@ export const PURPOSES = {
   FEED_4x5: { width: 1080, height: 1350 },
   STORY_9x16: { width: 1080, height: 1920 },
   THUMB: { width: 400, height: 500 },
+  /** Reels are never rendered: the uploaded video is used as-is (src/lib/ingest.ts saveVideo). */
+  REEL_9x16: { width: 1080, height: 1920 },
 } as const;
 export type Purpose = keyof typeof PURPOSES;
 
@@ -23,6 +25,7 @@ const MAX_BYTES = 8 * 1024 * 1024;
 export class RenditionError extends Error {}
 
 export function purposeFor(type: string): Purpose {
+  if (type === "REEL") return "REEL_9x16";
   return type === "STORY" ? "STORY_9x16" : "FEED_4x5";
 }
 

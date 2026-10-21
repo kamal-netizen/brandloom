@@ -84,6 +84,10 @@ node bin/brandloom.mjs reschedule <id> --at "2026-10-21 19:00"
 node bin/brandloom.mjs cancel <id>
 ```
 
+Reels: `--type reel --file reel.mp4` (MP4 or MOV, vertical 9:16, 3 s – 15 min, ≤ 300 MB). The file
+is published byte-for-byte — no transcode — so make it to spec (H.264 + AAC, 1080×1920, 30 fps).
+Instagram processes the video for a minute or two; the post shows *Scheduled* until it is live.
+
 Times without an offset are Dubai time. Repeating a `post` with the same inputs
 returns the same post. Images must be 4:5 (feed) or 9:16 (story) unless `--fit crop|pad`.
 Add `--json` for machine-readable output.

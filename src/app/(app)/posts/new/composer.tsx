@@ -11,7 +11,7 @@ import { appendHashtags, checkCaption } from "@/lib/caption";
 type AssetLite = { id: string; name: string; width: number; height: number; thumb: string | null };
 type BrandLite = { slug: string; name: string; handle: string | null; connected: boolean; hasPage: boolean; sets: { name: string; tags: string }[]; assets: AssetLite[] };
 
-const RATIO = { FEED: 4 / 5, STORY: 9 / 16 };
+const RATIO = { FEED: 4 / 5, STORY: 9 / 16, REEL: 9 / 16 };
 
 export function Composer({
   brands,
@@ -26,7 +26,7 @@ export function Composer({
 }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(createPostAction, null);
   const [slug, setSlug] = useState(initialBrand);
-  const [type, setType] = useState<"FEED" | "STORY">("FEED");
+  const [type, setType] = useState<"FEED" | "STORY" | "REEL">("FEED");
   const [caption, setCaption] = useState("");
   const [assetId, setAssetId] = useState(initialAsset);
   const [uploaded, setUploaded] = useState<Record<string, AssetLite[]>>({});
@@ -108,14 +108,14 @@ export function Composer({
           <div>
             <span className="label">Type</span>
             <div className="flex gap-1.5">
-              {(["FEED", "STORY"] as const).map((t) => (
+              {(["FEED", "STORY", "REEL"] as const).map((t) => (
                 <button
                   type="button"
                   key={t}
                   onClick={() => setType(t)}
                   className={cn("rounded-lg border px-3 py-1.5 text-sm", t === type ? "border-brand text-white" : "border-line text-muted")}
                 >
-                  {t === "FEED" ? "Feed post · 4:5" : "Story · 9:16"}
+                  {t === "FEED" ? "Feed post · 4:5" : t === "STORY" ? "Story · 9:16" : "Reel · 9:16 video"}
                 </button>
               ))}
             </div>
@@ -150,7 +150,7 @@ export function Composer({
               <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()} disabled={uploading}>
                 <UploadSimple /> {uploading ? "Uploading…" : "Upload"}
               </button>
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => upload(e.target.files)} />
+              <input ref={fileRef} type="file" accept={type === "REEL" ? "video/mp4,video/quicktime" : "image/png,image/jpeg,image/webp"} className="hidden" onChange={(e) => upload(e.target.files)} />
               <span className="text-xs text-muted">or pick from {brand?.name}&apos;s library</span>
             </div>
             {uploadError && <p className="mb-2 text-sm text-red-300">{uploadError}</p>}

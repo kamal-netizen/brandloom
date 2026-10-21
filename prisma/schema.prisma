@@ -184,7 +184,7 @@ model Rendition {
   id      String @id @default(cuid())
   assetId String
   asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  purpose String // FEED_4x5 | STORY_9x16 | THUMB
+  purpose String // FEED_4x5 | STORY_9x16 | THUMB | REEL_9x16 (the uploaded video itself, no transcode)
   key     String @unique
   width   Int
   height  Int
@@ -202,12 +202,17 @@ model Rendition {
 /// service cannot act as service_role (src/lib/media-store.ts), and Postgres
 /// is already backed up nightly. Files are small by construction — originals
 /// are re-encoded at ingest, renditions are ≤ 1080 px JPEGs.
+/// Large files (reels) are stored in 8 MB parts (part 0, 1, 2 …) so no single
+/// value — and no single Prisma read — holds a whole video in memory.
 model MediaObject {
-  key       String   @id
+  key       String
+  part      Int      @default(0)
   mime      String
-  size      Int
+  size      Int // size of THIS part
   bytes     Bytes
   createdAt DateTime @default(now())
+
+  @@id([key, part])
 }
 
 // ---------- Posts ----------

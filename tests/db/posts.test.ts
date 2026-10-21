@@ -140,3 +140,35 @@ describe("international brand rule", () => {
     expect(post.status).toBe("PENDING_APPROVAL");
   });
 });
+
+describe("reel uploads", () => {
+  it("stores a video in 8 MB database parts and rebuilds it byte-for-byte on disk", async () => {
+    const { mp4 } = await import("../fixtures/mp4");
+    const { mediaOnDisk, PUBLIC_DIR } = await import("@/lib/media-store");
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const brand = await brandWithConnection();
+    const video = mp4({ w: 1080, h: 1920, seconds: 15.6, mdatBytes: 20 * 1024 * 1024 });
+    const { asset } = await saveAsset(brand, video, "reel.mp4", "video/mp4", "API");
+    expect(asset).toMatchObject({ kind: "VIDEO", width: 1080, height: 1920 });
+    expect(await db.mediaObject.count({ where: { key: asset.originalKey } })).toBe(3); // 8 + 8 + ~4 MB
+
+    await fs.rm(path.join(PUBLIC_DIR, ...asset.originalKey.split("/"))); // a fresh container
+    const onDisk = await mediaOnDisk(asset.originalKey);
+    expect(Buffer.compare(await fs.readFile(onDisk!), video)).toBe(0);
+
+    const { post } = await createPost({ brand, type: "REEL", caption: "Cracked. Churned. Chilled.", assetIds: [asset.id], scheduledAt: soon(), source: "API", canApprove: false });
+    const media = await db.postMedia.findFirstOrThrow({ where: { postId: post.id }, include: { rendition: true } });
+    expect(media.rendition).toMatchObject({ purpose: "REEL_9x16", key: asset.originalKey });
+  });
+
+  it("refuses landscape video, and refuses an image as a reel", async () => {
+    const { mp4 } = await import("../fixtures/mp4");
+    const brand = await brandWithConnection();
+    await expect(saveAsset(brand, mp4({ w: 1920, h: 1080, seconds: 10 }), "wide.mp4", "video/mp4")).rejects.toThrow(/vertical/);
+    const image = await poster(brand);
+    await expect(
+      createPost({ brand, type: "REEL", caption: "", assetIds: [image.id], scheduledAt: soon(), source: "API", canApprove: false })
+    ).rejects.toThrow(/needs a video/);
+  });
+});

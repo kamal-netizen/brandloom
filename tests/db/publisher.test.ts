@@ -230,3 +230,60 @@ describe("Facebook Page publishing", () => {
     expect(row.lastError).toMatch(/no Facebook Page/);
   });
 });
+
+describe("reels", () => {
+  async function dueReel(brandId: string, extra: Record<string, unknown> = {}) {
+    const asset = await db.asset.create({
+      data: { brandId, kind: "VIDEO", originalKey: `m/x/${Math.random()}/reel.mp4`, originalName: "reel.mp4", mime: "video/mp4", bytes: 1, width: 1080, height: 1920, sha256: String(Math.random()) },
+    });
+    const rendition = await db.rendition.create({
+      data: { assetId: asset.id, purpose: "REEL_9x16", key: asset.originalKey, width: 1080, height: 1920, bytes: 1 },
+    });
+    return db.post.create({
+      data: {
+        brandId,
+        type: "REEL",
+        status: "SCHEDULED",
+        caption: "Cracked. Churned. Chilled.",
+        scheduledAt: new Date(Date.now() - 1000),
+        media: { create: [{ assetId: asset.id, renditionId: rendition.id }] },
+        ...extra,
+      },
+    });
+  }
+
+  it("publishes an Instagram reel, waiting across ticks while Instagram processes the video", async () => {
+    const brand = await brandWithConnection();
+    const post = await dueReel(brand.id);
+    const ig = fakeGraph();
+    ig.reelProcessingPolls = 7; // longer than one tick's polling
+    expect((await tick({ graph: ig.graph, instance: "t", sleep: noSleep })).results[post.id]).toBe("deferred");
+    let row = await db.post.findUniqueOrThrow({ where: { id: post.id } });
+    expect(row).toMatchObject({ status: "SCHEDULED", publishStep: "CONTAINER_CREATED" });
+    expect(ig.calls.reel).toBe(1);
+
+    await db.post.update({ where: { id: post.id }, data: { nextAttemptAt: null } });
+    expect((await tick({ graph: ig.graph, instance: "t", sleep: noSleep })).results[post.id]).toBe("published");
+    expect(ig.calls.reel).toBe(1); // the same container, not a second upload
+    expect(ig.calls.publish).toBe(1);
+    row = await db.post.findUniqueOrThrow({ where: { id: post.id } });
+    expect(row.status).toBe("PUBLISHED");
+  });
+
+  it("publishes a Facebook Page reel: start, upload by URL, finish once, poll until complete", async () => {
+    const brand = await brandWithConnection();
+    const post = await dueReel(brand.id, { platform: "FACEBOOK" });
+    const ig = fakeGraph();
+    ig.reelProcessingPolls = 2;
+    expect((await tick({ graph: ig.graph, instance: "t", sleep: noSleep })).results[post.id]).toBe("deferred");
+    for (let i = 0; i < 3; i++) {
+      await db.post.update({ where: { id: post.id }, data: { nextAttemptAt: null } });
+      await tick({ graph: ig.graph, instance: "t", sleep: noSleep });
+    }
+    const row = await db.post.findUniqueOrThrow({ where: { id: post.id } });
+    expect(row.status).toBe("PUBLISHED");
+    expect(row.igPermalink).toMatch(/facebook\.com\/reel\//);
+    expect([ig.calls.fbReelStart, ig.calls.fbReelUpload, ig.calls.fbReelFinish]).toEqual([1, 1, 1]);
+    expect([...ig.fbReels.values()][0].description).toBe("Cracked. Churned. Chilled.");
+  });
+});

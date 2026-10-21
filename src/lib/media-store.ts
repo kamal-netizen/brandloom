@@ -74,16 +74,56 @@ async function writeAtomic(target: string, bytes: Uint8Array) {
   }
 }
 
+/** Parts are written and read one at a time: a reel never sits in memory twice. */
+export const PART_BYTES = 8 * 1024 * 1024;
+
 async function durableGet(key: string): Promise<Buffer | null> {
   const cfg = storageConfig();
   if (cfg) return getObject(cfg, key);
-  const row = await db.mediaObject.findUnique({ where: { key }, select: { bytes: true } });
-  return row ? Buffer.from(row.bytes) : null;
+  const parts = await db.mediaObject.findMany({ where: { key }, select: { part: true }, orderBy: { part: "asc" } });
+  if (!parts.length) return null;
+  const chunks: Buffer[] = [];
+  for (const { part } of parts) {
+    const row = await db.mediaObject.findUnique({ where: { key_part: { key, part } }, select: { bytes: true } });
+    if (row) chunks.push(Buffer.from(row.bytes));
+  }
+  return Buffer.concat(chunks);
+}
+
+/** Streams the durable copy onto disk part by part (videos: never the whole file in memory). */
+async function durableToDisk(key: string, target: string): Promise<boolean> {
+  const cfg = storageConfig();
+  if (cfg) {
+    const bytes = await getObject(cfg, key);
+    if (!bytes?.byteLength) return false;
+    await writeAtomic(target, bytes);
+    return true;
+  }
+  const parts = await db.mediaObject.findMany({ where: { key }, select: { part: true }, orderBy: { part: "asc" } });
+  if (!parts.length) return false;
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  const tmp = `${target}.${process.pid}-${Math.random().toString(36).slice(2, 8)}.part`;
+  const fh = await fs.open(tmp, "w");
+  try {
+    for (const { part } of parts) {
+      const row = await db.mediaObject.findUnique({ where: { key_part: { key, part } }, select: { bytes: true } });
+      if (!row) throw new Error(`part ${part} of ${key} vanished`);
+      await fh.write(row.bytes);
+    }
+    await fh.close();
+    await fs.rename(tmp, target);
+    return true;
+  } catch (err) {
+    await fh.close().catch(() => {});
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 const inflight = new Map<string, Promise<Buffer | null>>();
+const inflightDisk = new Map<string, Promise<string | null>>();
 
-/** The bytes at a key: disk cache first, then the durable copy (cached on the way past). */
+/** The bytes at a key: disk cache first, then the durable copy (cached on the way past). Images and small files. */
 export async function readMedia(key: string): Promise<Buffer | null> {
   const target = diskPath(key);
   const local = await fs.readFile(target).catch(() => null);
@@ -108,6 +148,29 @@ export async function readMedia(key: string): Promise<Buffer | null> {
   return pending;
 }
 
+/**
+ * The path of a complete copy on this container's disk, fetching it from the
+ * durable store first if needed; null if the key does not exist. The media
+ * route streams from here so Range requests (how Meta downloads video) work.
+ */
+export async function mediaOnDisk(key: string): Promise<string | null> {
+  const target = diskPath(key);
+  const st = await fs.stat(target).catch(() => null);
+  if (st?.size) return target;
+  let pending = inflightDisk.get(key);
+  if (!pending) {
+    pending = durableToDisk(key, target)
+      .then((ok) => (ok ? target : null))
+      .catch((err) => {
+        console.error(`[media] durable read failed for ${key} — ${err.message}`);
+        throw new MediaUnavailableError(err.message);
+      })
+      .finally(() => inflightDisk.delete(key));
+    inflightDisk.set(key, pending);
+  }
+  return pending;
+}
+
 /** Durable copy first, then the disk cache: an upload is not done until its durable copy is. */
 export async function writeMedia(key: string, bytes: Uint8Array): Promise<void> {
   const type = mediaType(key);
@@ -115,8 +178,11 @@ export async function writeMedia(key: string, bytes: Uint8Array): Promise<void> 
   const cfg = storageConfig();
   if (cfg) await putObject(cfg, key, bytes, type);
   else {
-    const data = { mime: type, size: bytes.byteLength, bytes: Buffer.from(bytes) };
-    await db.mediaObject.upsert({ where: { key }, create: { key, ...data }, update: data });
+    await db.mediaObject.deleteMany({ where: { key } });
+    for (let part = 0, at = 0; at < bytes.byteLength || part === 0; part++, at += PART_BYTES) {
+      const slice = Buffer.from(bytes.buffer, bytes.byteOffset + at, Math.min(PART_BYTES, bytes.byteLength - at));
+      await db.mediaObject.create({ data: { key, part, mime: type, size: slice.byteLength, bytes: new Uint8Array(slice) } });
+    }
   }
   await writeAtomic(diskPath(key), bytes);
 }

@@ -11,7 +11,7 @@ import { parseDubai } from "@/lib/time";
 /**
  * POST /api/v1/posts  (multipart/form-data)
  *   brand        slug (required)
- *   type         feed | story (required)
+ *   type         feed | story | reel (required; a reel takes one MP4/MOV video, 9:16, 3 s–15 min, ≤ 300 MB)
  *   platforms    instagram (default) | facebook | instagram,facebook — one post per platform
  *   caption      text, or a file part named caption
  *   files[]      one image   — or —   assetIds  an existing asset id
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     const brand = await db.brand.findUnique({ where: { slug: str("brand") } });
     if (!brand) throw new ApiError(400, "invalid", "Unknown brand.");
     const type = str("type").toUpperCase();
-    if (type !== "FEED" && type !== "STORY") throw new ApiError(400, "invalid", "type must be feed or story.");
+    if (type !== "FEED" && type !== "STORY" && type !== "REEL") throw new ApiError(400, "invalid", "type must be feed, story or reel.");
 
     const captionPart = form.get("caption");
     const caption = captionPart instanceof File ? await captionPart.text() : (captionPart ?? "").toString();

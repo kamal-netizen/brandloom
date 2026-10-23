@@ -8,7 +8,9 @@
  *   brandloom brands
  *   brandloom post --brand corechamps --type feed|story|reel --file poster.jpg|reel.mp4
  *                  (--caption "…" | --caption-file caption.txt) [--hashtags default|<set>]
- *                  [--platforms instagram|facebook|instagram,facebook]   (default instagram)
+ *                  [--platforms instagram|facebook|tiktok, comma-separated]   (default instagram; tiktok = reels only)
+ *                  [--tiktok-privacy self|friends|followers|public] [--tiktok-allow comment,duet,stitch]
+ *                  [--tiktok-disclosure none|yourbrand|branded|both]   (TikTok is private-only until the app passes review)
  *                  [--at "2026-10-20 19:00" | --at 2026-10-20T19:00+04:00 | --now] [--draft]
  *                  [--fit reject|crop|pad] [--ref <idempotency key>] [--json]
  *   brandloom list [--brand x] [--status pending|scheduled|published|failed|draft] [--from …] [--to …] [--json]
@@ -136,6 +138,9 @@ async function cmdPost(opt) {
   if (opt.draft) form.set("status", "draft");
   if (opt.fit) form.set("fit", opt.fit);
   if (opt.platforms) form.set("platforms", String(opt.platforms));
+  if (opt["tiktok-privacy"]) form.set("tiktokPrivacy", String(opt["tiktok-privacy"]));
+  if (opt["tiktok-allow"]) form.set("tiktokAllow", String(opt["tiktok-allow"]));
+  if (opt["tiktok-disclosure"]) form.set("tiktokDisclosure", String(opt["tiktok-disclosure"]));
 
   // Platforms are not in the key: the server suffixes it per platform, so adding
   // facebook to a command that already ran for instagram creates only the new one.

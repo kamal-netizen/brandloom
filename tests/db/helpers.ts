@@ -10,6 +10,7 @@ export async function reset() {
   await db.rendition.deleteMany();
   await db.asset.deleteMany();
   await db.igConnection.deleteMany();
+  await db.tiktokConnection.deleteMany();
   await db.hashtagSet.deleteMany();
   await db.brand.deleteMany();
 }

@@ -105,6 +105,7 @@ model Brand {
 
   hashtagSets HashtagSet[]
   connection  IgConnection?
+  tiktok      TiktokConnection?
   assets      Asset[]
   posts       Post[]
 }
@@ -151,6 +152,36 @@ model IgConnection {
   connectedByUserId   String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+}
+
+/// One TikTok account per brand, through Login Kit (scopes user.info.basic,
+/// video.publish, video.upload). Access tokens last 24 h and are refreshed by
+/// the scheduler before they lapse; the refresh token lasts a year from the
+/// first login, so a brand reconnects once a year. Both tokens AES-256-GCM
+/// (src/lib/crypto.ts); a disconnect erases them (empty strings).
+model TiktokConnection {
+  id                    String    @id @default(cuid())
+  brandId               String    @unique
+  brand                 Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  openId                String
+  displayName           String
+  username              String? // creator_username from creator_info (user.info.basic has no handle)
+  avatarUrl             String?
+  accessTokenEnc        String
+  accessTokenExpiresAt  DateTime
+  refreshTokenEnc       String
+  refreshTokenExpiresAt DateTime
+  scopes                String    @default("")
+  status                String    @default("CONNECTED") // CONNECTED | NEEDS_RECONNECT | DISCONNECTED
+  /// Set while one process refreshes the tokens (refresh tokens can rotate, so only one may).
+  refreshingAt          DateTime?
+  lastCheckedAt         DateTime?
+  lastError             String?
+  connectedByUserId     String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([openId])
 }
 
 // ---------- Media ----------
@@ -222,7 +253,9 @@ model Post {
   brandId          String
   brand            Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
   type             String // FEED | STORY | REEL | CAROUSEL
-  platform         String    @default("INSTAGRAM") // INSTAGRAM | FACEBOOK (the brand's Facebook Page)
+  platform         String    @default("INSTAGRAM") // INSTAGRAM | FACEBOOK (the brand's Facebook Page) | TIKTOK
+  /// TikTok post settings chosen by a person (src/lib/tiktok/settings.ts): privacy, interactions, disclosure. JSON; "" off TikTok.
+  tiktokJson       String    @default("")
   status           String    @default("DRAFT") // see src/lib/status.ts
   caption          String    @default("")
   scheduledAt      DateTime?
@@ -238,7 +271,7 @@ model Post {
   // Publisher step machine (src/lib/publish/engine.ts). Each step is saved
   // before the next Graph call, so a crash resumes instead of repeating.
   publishStep   String    @default("NONE") // NONE | CONTAINER_CREATED | CONTAINER_READY | PUBLISH_CALLED | DONE
-  igContainerId String?
+  igContainerId String? // Instagram container, Facebook photo/video id, or TikTok publish_id
   igMediaId     String?
   igPermalink   String?
   publishedAt   DateTime?

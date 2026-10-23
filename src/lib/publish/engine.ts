@@ -1,9 +1,13 @@
+import fs from "node:fs/promises";
 import { hostname } from "node:os";
-import { Prisma } from "@prisma/client";
+import { Prisma, type TiktokConnection } from "@prisma/client";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
-import { publicUrl } from "@/lib/media-store";
+import { mediaOnDisk, mediaType, publicUrl } from "@/lib/media-store";
 import { graphFor, GraphError, type Graph } from "@/lib/meta/graph";
+import { chunkPlan, tiktok as tiktokApi, TiktokError, type Tiktok } from "@/lib/tiktok/api";
+import { tiktokAccessToken } from "@/lib/tiktok/connections";
+import { parseSettings, postInfoFor, TiktokSettingsError } from "@/lib/tiktok/settings";
 
 /**
  * The publisher: a resumable step machine per post.
@@ -32,9 +36,15 @@ const POLL_EVERY_MS = 2_000;
 const DEFER_IN_PROGRESS_MS = 20_000;
 const DEFER_QUOTA_MS = 60 * 60_000;
 
+/** A stored video read in pieces (TikTok FILE_UPLOAD sends it in chunks). */
+export type VideoSource = { size: number; mime: string; read(start: number, end: number): Promise<Uint8Array>; close(): Promise<void> };
+
 export type EngineDeps = {
   /** Override for tests; by default each connection gets its own host (graphFor). */
   graph?: Graph;
+  /** Overrides for tests: a fake TikTok and video store. */
+  tiktok?: Tiktok;
+  video?: (key: string) => Promise<VideoSource>;
   instance?: string;
   sleep?: (ms: number) => Promise<void>;
   dailyCap?: number;
@@ -42,9 +52,34 @@ export type EngineDeps = {
 
 type Ctx = Required<Omit<EngineDeps, "graph">> & { graph: Graph | null };
 
+/** The durable copy, pulled onto this container's disk, read chunk by chunk. */
+async function diskVideo(key: string): Promise<VideoSource> {
+  const file = await mediaOnDisk(key);
+  if (!file) throw new Error(`The video file ${key} is missing from storage.`);
+  const fh = await fs.open(file, "r");
+  const { size } = await fh.stat();
+  return {
+    size,
+    mime: mediaType(key) ?? "video/mp4",
+    async read(start, end) {
+      const buf = Buffer.alloc(end - start);
+      let at = 0;
+      while (at < buf.length) {
+        const { bytesRead } = await fh.read(buf, at, buf.length - at, start + at);
+        if (!bytesRead) throw new Error(`${key} ended early`);
+        at += bytesRead;
+      }
+      return buf;
+    },
+    close: () => fh.close(),
+  };
+}
+
 function ctx(deps: EngineDeps = {}): Ctx {
   return {
     graph: deps.graph ?? null,
+    tiktok: deps.tiktok ?? tiktokApi,
+    video: deps.video ?? diskVideo,
     instance: deps.instance ?? INSTANCE,
     sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
     dailyCap: deps.dailyCap ?? Number(process.env.PUBLISH_DAILY_CAP || 25),
@@ -156,6 +191,21 @@ export async function advance(postId: string, deps: EngineDeps = {}): Promise<Ad
 
 async function onGraphError(c: Ctx, postId: string, err: GraphError): Promise<AdvanceResult> {
   try {
+    if (err instanceof TiktokError && err.auth) {
+      const post = await db.post.findUnique({ where: { id: postId }, select: { brandId: true } });
+      if (post) {
+        await db.tiktokConnection.updateMany({
+          where: { brandId: post.brandId, status: "CONNECTED" },
+          data: { status: "NEEDS_RECONNECT", lastError: err.display.slice(0, 500) },
+        });
+      }
+      await fail(c, postId, `TikTok connection needs reconnecting: ${err.display}`);
+      return "failed";
+    }
+    if (err instanceof TiktokError && err.quota) {
+      await defer(c, postId, DEFER_QUOTA_MS, `TikTok's daily posting limit is reached (${err.ttCode}); waiting.`);
+      return "deferred";
+    }
     if (err.auth) {
       const post = await db.post.findUnique({ where: { id: postId }, select: { brandId: true } });
       if (post) {
@@ -192,11 +242,26 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
   const post = await db.post.findUnique({
     where: { id: postId },
     include: {
-      brand: { include: { connection: true } },
-      media: { include: { rendition: true }, orderBy: { position: "asc" } },
+      brand: { include: { connection: true, tiktok: true } },
+      media: { include: { rendition: true, asset: true }, orderBy: { position: "asc" } },
     },
   });
   if (!post || post.status !== "PUBLISHING" || post.lockedBy !== c.instance) return "skipped";
+
+  if (post.platform === "TIKTOK") {
+    const tt = post.brand.tiktok;
+    if (!tt || tt.status !== "CONNECTED") {
+      await fail(c, post.id, `TikTok is not connected for ${post.brand.name}. Connect it on the brand page, then retry.`);
+      return "failed";
+    }
+    const video = post.media[0];
+    if (post.type !== "REEL" || video?.rendition.purpose !== "REEL_9x16") {
+      await fail(c, post.id, "TikTok posts need a video (type reel).");
+      return "failed";
+    }
+    const duration = Number(/duration:([\d.]+)/.exec(video.asset.tags)?.[1] ?? 0);
+    return runTiktok(c, post, tt, video.rendition, duration);
+  }
 
   const conn = post.brand.connection;
   if (!conn || conn.status !== "CONNECTED") {
@@ -477,6 +542,155 @@ async function runFacebookReel(
   }
   await defer(c, post.id, DEFER_IN_PROGRESS_MS);
   return "deferred";
+}
+
+/**
+ * TikTok Direct Post, FILE_UPLOAD:
+ *
+ *   NONE ─creator_info + video/init─▶ CONTAINER_CREATED (publish_id saved)
+ *        ─chunks…, PUBLISH_CALLED saved before the LAST chunk─▶ poll status ─▶ DONE
+ *
+ * The post goes live once TikTok has the last chunk, so the last PUT is the
+ * irreversible step. One publish_id can only ever become one post, so
+ * re-sending chunks to the same upload address is harmless; what must never
+ * happen is a second init after the last chunk landed. A resumed run at
+ * PUBLISH_CALLED therefore only polls the publish_id. A run interrupted
+ * before the last chunk (CONTAINER_CREATED) has lost the upload address,
+ * which is never stored, so that publish can no longer complete and it
+ * starts over with a fresh init.
+ */
+const TT_CHUNK_TRIES = 3;
+const TT_UPLOAD_URL_LIFE_MS = 65 * 60_000;
+const TT_GIVE_UP_MS = 3 * 60 * 60_000;
+
+async function runTiktok(
+  c: Ctx,
+  post: { id: string; caption: string; tiktokJson: string; publishStep: string; igContainerId: string | null; brandId: string },
+  conn: TiktokConnection,
+  rendition: { key: string; bytes: number },
+  durationSec: number
+): Promise<AdvanceResult> {
+  const api = c.tiktok;
+  const token = await tiktokAccessToken(conn);
+  let step = post.publishStep;
+  let publishId = post.igContainerId;
+
+  if (step !== "PUBLISH_CALLED" || !publishId) {
+    if (step !== "NONE") await owned(c, post.id, { igContainerId: null, publishStep: "NONE" });
+    step = "NONE";
+    publishId = null;
+  }
+
+  let size = rendition.bytes;
+  if (step === "NONE") {
+    const since = new Date(Date.now() - 24 * 60 * 60_000);
+    const ours = await db.post.count({ where: { brandId: post.brandId, platform: "TIKTOK", status: "PUBLISHED", publishedAt: { gte: since } } });
+    if (ours >= c.dailyCap) {
+      await defer(c, post.id, DEFER_QUOTA_MS, `Daily cap of ${c.dailyCap} TikTok posts reached for this brand; waiting.`);
+      return "deferred";
+    }
+    // Asked fresh every time: privacy options and limits can change after scheduling.
+    const creator = await logged(c, post.id, "TT_CREATOR_INFO", () => api.creatorInfo(token));
+    if (creator.maxDurationSec && durationSec > creator.maxDurationSec) {
+      await fail(c, post.id, `This video is ${durationSec.toFixed(0)} s; TikTok lets ${creator.nickname || "this account"} post at most ${creator.maxDurationSec} s.`);
+      return "failed";
+    }
+    let info;
+    try {
+      info = postInfoFor(parseSettings(post.tiktokJson), post.caption, creator);
+    } catch (err) {
+      if (err instanceof TiktokSettingsError) {
+        await fail(c, post.id, err.message);
+        return "failed";
+      }
+      throw err;
+    }
+
+    const video = await c.video(rendition.key);
+    try {
+      size = video.size;
+      const plan = chunkPlan(size);
+      const init = await logged(c, post.id, "TT_INIT", () => api.initVideo(token, info, { videoSize: size, chunkSize: plan.chunkSize, chunkCount: plan.chunkCount }));
+      publishId = init.publishId;
+      await owned(c, post.id, { igContainerId: publishId, publishStep: "CONTAINER_CREATED" });
+      for (const [i, [start, end]] of plan.ranges.entries()) {
+        const last = i === plan.ranges.length - 1;
+        // Saved before the call that makes the post go live.
+        if (last) await owned(c, post.id, { publishStep: "PUBLISH_CALLED" });
+        const bytes = await video.read(start, end);
+        await logged(c, post.id, `TT_UPLOAD ${i + 1}/${plan.chunkCount}`, () => uploadWithRetry(c, init.uploadUrl, bytes, start, size, video.mime, last), publishId);
+      }
+    } catch (err) {
+      // TikTok refused the upload itself (expired address, bad range): that publish cannot complete, start over next time.
+      if (err instanceof TiktokError && err.ttCode.startsWith("upload_")) await owned(c, post.id, { igContainerId: null, publishStep: "NONE" });
+      throw err;
+    } finally {
+      await video.close().catch(() => {});
+    }
+    step = "PUBLISH_CALLED";
+  }
+
+  // TikTok has (or may have) the whole file: ask, and never re-init while it could still post.
+  const started = await db.publishAttempt.findFirst({ where: { postId: post.id, step: "TT_INIT", ok: true }, orderBy: { startedAt: "desc" } });
+  const age = Date.now() - (started?.startedAt.getTime() ?? Date.now());
+  for (let i = 0; i < POLL_TRIES; i++) {
+    const s = await logged(c, post.id, "TT_STATUS", () => api.status(token, publishId!), publishId);
+    if (s.status === "PUBLISH_COMPLETE" || s.status === "SEND_TO_USER_INBOX") {
+      await finishTiktok(c, post.id, s.postIds[0] ?? null, conn.username, s.status === "SEND_TO_USER_INBOX");
+      return "published";
+    }
+    if (s.status === "FAILED") {
+      // Nothing was posted, so a retry may start a new publish.
+      await owned(c, post.id, { igContainerId: null, publishStep: "NONE" });
+      if (s.failReason === "internal") throw new TiktokError("TikTok had an internal error processing the video", 500, "internal");
+      if (s.failReason === "auth_removed") throw new TiktokError("The TikTok login was removed", 401, "auth_removed");
+      if (s.failReason === "spam_risk_too_many_posts") throw new TiktokError("Too many posts today", 403, "spam_risk_too_many_posts");
+      await fail(c, post.id, `TikTok rejected the video: ${s.failReason ?? "unknown reason"}.`);
+      return "failed";
+    }
+    const stalled = s.status === "PROCESSING_UPLOAD" && size > 0 && (s.uploadedBytes ?? size) < size;
+    if (stalled && age > TT_UPLOAD_URL_LIFE_MS) {
+      // The last chunk never arrived and the upload address has expired: this publish can never go live.
+      await owned(c, post.id, { igContainerId: null, publishStep: "NONE" });
+      await defer(c, post.id, DEFER_IN_PROGRESS_MS, "The TikTok upload did not finish; starting it again.");
+      return "deferred";
+    }
+    if (age > TT_GIVE_UP_MS) {
+      await fail(c, post.id, `TikTok has not finished the post after 3 hours (status ${s.status}) — check the TikTok app before retrying.`);
+      return "failed";
+    }
+    if (i < POLL_TRIES - 1) await c.sleep(POLL_EVERY_MS);
+  }
+  await defer(c, post.id, DEFER_IN_PROGRESS_MS, "TikTok is processing the video; it can take a few minutes to appear on the profile.");
+  return "deferred";
+}
+
+/** One chunk, retried in place on 5xx / network (TikTok's advice); a 416 on a re-sent last chunk means it had already landed. */
+async function uploadWithRetry(c: Ctx, url: string, bytes: Uint8Array, start: number, total: number, mime: string, last: boolean) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await c.tiktok.uploadChunk(url, bytes, start, total, mime);
+    } catch (err) {
+      if (last && attempt > 1 && err instanceof TiktokError && err.httpStatus === 416) return "complete";
+      if (!(err instanceof TiktokError) || !err.transient || attempt >= TT_CHUNK_TRIES) throw err;
+      await c.sleep(POLL_EVERY_MS * attempt);
+    }
+  }
+}
+
+async function finishTiktok(c: Ctx, id: string, postId: string | null, username: string | null, inbox: boolean) {
+  await owned(c, id, {
+    status: "PUBLISHED",
+    publishStep: "DONE",
+    igMediaId: postId,
+    // Only public posts get an id (after moderation); private ones are on the account's profile in the app.
+    igPermalink: postId && username ? `https://www.tiktok.com/@${username}/video/${postId}` : null,
+    publishedAt: new Date(),
+    lastError: inbox ? "TikTok put the video in the account's inbox as a draft; finish it in the TikTok app." : null,
+    lockedAt: null,
+    lockedBy: null,
+    nextAttemptAt: null,
+  });
 }
 
 async function finish(c: Ctx, api: Graph, id: string, mediaId: string | null, token: string, knownPermalink?: string, facebook = false) {

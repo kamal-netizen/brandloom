@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { appendHashtags, brandRuleViolations, checkCaption } from "@/lib/caption";
 import { ensureRendition, IngestError } from "@/lib/ingest";
 import { purposeFor, type Fit } from "@/lib/renditions";
-import { CANCELLABLE, EDITABLE, type Platform, type PostStatus, type PostType } from "@/lib/status";
+import { CANCELLABLE, EDITABLE, TIKTOK_TYPES, type Platform, type PostStatus, type PostType } from "@/lib/status";
+import { finalSettings, parseSettings, settingsProblems, type TiktokSettings } from "@/lib/tiktok/settings";
 import { MIN_LEAD_MS } from "@/lib/time";
 
 /**
@@ -27,6 +28,8 @@ export type CreatePostInput = {
   brand: Brand;
   type: PostType;
   platform?: Platform;
+  /** TikTok only: privacy, interactions and disclosure, as the person chose them. */
+  tiktok?: TiktokSettings;
   caption: string;
   hashtagSet?: string; // a set name, or "default"
   assetIds: string[];
@@ -64,6 +67,14 @@ function assertBrandRules(brand: Pick<Brand, "name" | "blockedTerms">, caption: 
   }
 }
 
+function tiktokJsonFor(type: string, caption: string, settings: TiktokSettings | undefined): string {
+  if (!TIKTOK_TYPES.includes(type)) throw new PostError("TikTok takes videos only: post it as a reel.", 400, "invalid");
+  if (!settings) throw new PostError("A TikTok post needs its TikTok settings (privacy).", 400, "invalid");
+  const problems = settingsProblems(settings, caption);
+  if (problems.length) throw new PostError(problems.join(" "), 400, "tiktok");
+  return JSON.stringify(finalSettings(settings));
+}
+
 function assertFuture(at: Date) {
   if (at.getTime() < Date.now() + MIN_LEAD_MS) throw new PostError("Scheduled time must be at least 2 minutes from now.");
 }
@@ -80,6 +91,7 @@ export async function createPost(input: CreatePostInput): Promise<{ post: Post; 
   const check = checkCaption(caption);
   if (!check.ok) throw new PostError(check.errors.join(" "), 400, "caption");
   assertBrandRules(brand, caption);
+  const tiktokJson = input.platform === "TIKTOK" ? tiktokJsonFor(input.type, caption, input.tiktok) : "";
 
   const desired = input.desired ?? (input.source === "UI" ? "draft" : "pending");
   let status: PostStatus;
@@ -112,6 +124,7 @@ export async function createPost(input: CreatePostInput): Promise<{ post: Post; 
         brandId: brand.id,
         type: input.type,
         platform: input.platform ?? "INSTAGRAM",
+        tiktokJson,
         status,
         caption,
         scheduledAt,
@@ -212,7 +225,7 @@ export async function retryPost(id: string) {
  */
 export async function editPost(
   id: string,
-  changes: { caption?: string; scheduledAt?: Date | null },
+  changes: { caption?: string; scheduledAt?: Date | null; tiktok?: TiktokSettings },
   by: { canApprove: boolean }
 ): Promise<Post> {
   const post = await load(id);
@@ -226,9 +239,17 @@ export async function editPost(
     if (!check.ok) throw new PostError(check.errors.join(" "), 400, "caption");
     const brand = await db.brand.findUniqueOrThrow({ where: { id: post.brandId }, select: { name: true, blockedTerms: true } });
     assertBrandRules(brand, changes.caption);
+    if (post.platform === "TIKTOK") tiktokJsonFor(post.type, changes.caption, changes.tiktok ?? parseSettings(post.tiktokJson));
     data.caption = changes.caption;
     // An existing container carries the old caption.
     if (post.publishStep !== "NONE") Object.assign(data, { publishStep: "NONE", igContainerId: null });
+  }
+  if (changes.tiktok && post.platform === "TIKTOK") {
+    const json = tiktokJsonFor(post.type, (data.caption as string | undefined) ?? post.caption, changes.tiktok);
+    if (json !== post.tiktokJson) {
+      data.tiktokJson = json;
+      if (post.publishStep !== "NONE") Object.assign(data, { publishStep: "NONE", igContainerId: null });
+    }
   }
   if (changes.scheduledAt !== undefined) {
     if (changes.scheduledAt) assertFuture(changes.scheduledAt);

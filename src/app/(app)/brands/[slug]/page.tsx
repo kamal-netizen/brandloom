@@ -1,4 +1,4 @@
-/* eslint-disable @next/next/no-img-element -- renditions and Instagram CDN avatars */
+/* eslint-disable @next/next/no-img-element -- renditions and Instagram / TikTok CDN avatars */
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
@@ -6,7 +6,10 @@ import { db } from "@/lib/db";
 import { publicUrl } from "@/lib/media-store";
 import { metaConfigured } from "@/lib/meta/oauth";
 import { igConfigured } from "@/lib/meta/ig-oauth";
-import { checkRightsAction, deleteHashtagSetAction, disconnectAction, saveBrandAction, saveHashtagSetAction } from "@/app/actions/brands";
+import { checkRightsAction, deleteHashtagSetAction, disconnectAction, disconnectTiktokAction, saveBrandAction, saveHashtagSetAction } from "@/app/actions/brands";
+import { tiktokConfigured } from "@/lib/tiktok/oauth";
+import { tiktokPrivateOnly } from "@/lib/tiktok/settings";
+import type { TiktokConnection } from "@prisma/client";
 import { storedRights } from "@/lib/meta/rights";
 import { Notice, PageHeader } from "@/components/ui";
 import { formatDubai, requestNow } from "@/lib/time";
@@ -25,6 +28,7 @@ export default async function BrandPage({
     where: { slug },
     include: {
       connection: true,
+      tiktok: true,
       hashtagSets: { orderBy: { name: "asc" } },
       assets: { orderBy: { createdAt: "desc" }, take: 24, include: { renditions: { where: { purpose: "THUMB" } } } },
     },
@@ -224,6 +228,8 @@ export default async function BrandPage({
             )}
           </section>
 
+          <TiktokCard slug={slug} brandName={brand.name} t={brand.tiktok} />
+
           <section className="card p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">Recent images</h2>
@@ -244,6 +250,64 @@ export default async function BrandPage({
         </aside>
       </div>
     </div>
+  );
+}
+
+function TiktokCard({ slug, brandName, t }: { slug: string; brandName: string; t: TiktokConnection | null }) {
+  const live = t && t.status !== "DISCONNECTED";
+  return (
+    <section id="tiktok" className="card space-y-4 p-5">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">TikTok</h2>
+      {live ? (
+        <>
+          <div className="flex items-center gap-3">
+            {t.avatarUrl ? <img src={t.avatarUrl} alt="" className="h-11 w-11 rounded-full" /> : <span className="h-11 w-11 rounded-full bg-zinc-700" />}
+            <div>
+              <div className="font-medium">{t.displayName}</div>
+              <div className="text-xs text-muted">{t.username ? `@${t.username}` : "TikTok account"} · Login Kit</div>
+            </div>
+          </div>
+          {t.status === "NEEDS_RECONNECT" && <Notice tone="error">{t.lastError ?? "The TikTok login needs to be renewed."}</Notice>}
+          {t.status === "CONNECTED" && t.lastError && <Notice tone="warn">{t.lastError}</Notice>}
+          <dl className="grid grid-cols-2 gap-y-1.5 text-xs">
+            <dt className="text-muted">Status</dt>
+            <dd>{t.status === "CONNECTED" ? "Connected" : "Needs reconnect"}</dd>
+            <dt className="text-muted">Access token until</dt>
+            <dd>{formatDubai(t.accessTokenExpiresAt)} · auto-renews</dd>
+            <dt className="text-muted">Login valid until</dt>
+            <dd>{formatDubai(t.refreshTokenExpiresAt, { withYear: true })}</dd>
+            <dt className="text-muted">Permissions</dt>
+            <dd className="break-words">{t.scopes.split(",").join(", ") || "—"}</dd>
+            <dt className="text-muted">Visibility</dt>
+            <dd>{tiktokPrivateOnly() ? "Private only (Only me) until the TikTok app passes review" : "Chosen per post"}</dd>
+          </dl>
+          <div className="flex gap-2">
+            {tiktokConfigured() && (
+              <a href={`/api/tiktok/connect?brand=${slug}`} className="btn-ghost">
+                Reconnect
+              </a>
+            )}
+            <form action={disconnectTiktokAction}>
+              <input type="hidden" name="slug" value={slug} />
+              <button className="btn-danger">Disconnect</button>
+            </form>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-muted">
+            Publish reels to {brandName}&apos;s TikTok through TikTok&apos;s official Content Posting API. TikTok asks you to log in and allow Brandloom to post videos.
+          </p>
+          <a href={`/api/tiktok/connect?brand=${slug}`} className="btn-primary">
+            Connect TikTok
+          </a>
+          {!tiktokConfigured() && (
+            <Notice tone="warn">The TikTok app keys are not set yet (TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET in Shipyard). Follow docs/TIKTOK_SETUP.md.</Notice>
+          )}
+          <p className="text-xs text-muted">TikTok connects whichever account is signed in at tiktok.com — check it is {brandName}&apos;s before you allow.</p>
+        </>
+      )}
+    </section>
   );
 }
 

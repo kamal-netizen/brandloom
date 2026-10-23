@@ -14,7 +14,8 @@ import {
 } from "@/app/actions/posts";
 import { PhonePreview } from "@/components/phone-preview";
 import { BrandDot, brandColor, Notice, PageHeader, StatusBadge } from "@/components/ui";
-import { CANCELLABLE, EDITABLE, type PostStatus } from "@/lib/status";
+import { CANCELLABLE, EDITABLE, platformLabel, type PostStatus } from "@/lib/status";
+import { describeSettings, parseSettings, PRIVACY_LABEL, PRIVACY_LEVELS, tiktokPrivateOnly } from "@/lib/tiktok/settings";
 import { formatDubai, toDubaiInput, requestNow } from "@/lib/time";
 
 export const metadata: Metadata = { title: "Post" };
@@ -30,7 +31,7 @@ export default async function PostPage({
   const post = await db.post.findUnique({
     where: { id },
     include: {
-      brand: { include: { connection: true } },
+      brand: { include: { connection: true, tiktok: true } },
       media: { include: { rendition: true, asset: true } },
       attempts: { orderBy: { startedAt: "desc" }, take: 30 },
     },
@@ -40,11 +41,15 @@ export default async function PostPage({
   const img = post.media[0] ? publicUrl(post.media[0].rendition.key) : null;
   const editable = EDITABLE.includes(status) && post.publishStep !== "PUBLISH_CALLED";
   const overdue = post.scheduledAt && post.scheduledAt.getTime() <= requestNow();
+  const isTiktok = post.platform === "TIKTOK";
+  const tt = isTiktok ? parseSettings(post.tiktokJson) : null;
+  const connected = isTiktok ? post.brand.tiktok?.status === "CONNECTED" : post.brand.connection?.status === "CONNECTED";
+  const kind = post.type === "STORY" ? "story" : post.type === "REEL" ? "reel" : "post";
 
   return (
     <div>
       <PageHeader
-        title={`${post.brand.name} · ${post.platform === "FACEBOOK" ? "Facebook" : "Instagram"} ${post.type === "STORY" ? "story" : "post"}`}
+        title={`${post.brand.name} · ${platformLabel(post.platform)} ${kind}`}
         sub={
           <span className="flex flex-wrap items-center gap-2">
             <BrandDot color={brandColor(post.brand)} />
@@ -57,7 +62,7 @@ export default async function PostPage({
         actions={
           post.igPermalink && (
             <a href={post.igPermalink} target="_blank" rel="noreferrer" className="btn-primary">
-              View on {post.platform === "FACEBOOK" ? "Facebook" : "Instagram"}
+              View on {platformLabel(post.platform)}
             </a>
           )
         }
@@ -66,9 +71,15 @@ export default async function PostPage({
       {sp.error && <Notice tone="error">{sp.error}</Notice>}
       {post.lastError && post.status !== "PUBLISHED" && <Notice tone={post.status === "FAILED" ? "error" : "warn"}>{post.lastError}</Notice>}
       {post.rejectNote && post.status === "DRAFT" && <Notice tone="warn">Rejected: {post.rejectNote}</Notice>}
-      {post.brand.connection?.status !== "CONNECTED" && !["PUBLISHED", "CANCELLED"].includes(status) && (
+      {isTiktok && status === "PUBLISHED" && !post.igPermalink && (
+        <Notice tone="ok">
+          Published to TikTok{tt?.privacy === "SELF_ONLY" ? " as a private video (Only me)" : ""}. TikTok gives no link for it until it is public and has passed
+          moderation; find it on the account&apos;s profile in the TikTok app.
+        </Notice>
+      )}
+      {!connected && !["PUBLISHED", "CANCELLED"].includes(status) && (
         <Notice tone="warn">
-          {post.brand.name} is not connected to Instagram.{" "}
+          {post.brand.name} is not connected to {isTiktok ? "TikTok" : "Instagram"}.{" "}
           <Link href={`/brands/${post.brand.slug}`} className="underline">
             Connect it
           </Link>{" "}
@@ -86,6 +97,21 @@ export default async function PostPage({
                 <textarea id="caption" name="caption" rows={10} defaultValue={post.caption} className="field leading-relaxed" />
               </div>
               <div className="flex flex-wrap items-end gap-3">
+                {tt && (
+                  <div>
+                    <label className="label" htmlFor="ttPrivacy">TikTok: who can view</label>
+                    <select id="ttPrivacy" name="ttPrivacy" defaultValue={tt.privacy ?? ""} className="field w-auto">
+                      <option value="" disabled>
+                        Choose…
+                      </option>
+                      {PRIVACY_LEVELS.map((o) => (
+                        <option key={o} value={o} disabled={tiktokPrivateOnly() && o !== "SELF_ONLY"}>
+                          {PRIVACY_LABEL[o]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="label" htmlFor="scheduledAt">Time (Dubai)</label>
                   <input
@@ -161,7 +187,7 @@ export default async function PostPage({
           <section className="card p-5">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted">Publish log</h2>
             {post.attempts.length === 0 ? (
-              <p className="text-sm text-muted">No calls to Instagram yet.</p>
+              <p className="text-sm text-muted">No calls to {platformLabel(post.platform)} yet.</p>
             ) : (
               <table className="w-full text-left text-xs">
                 <tbody>
@@ -178,6 +204,7 @@ export default async function PostPage({
             <p className="mt-3 text-xs text-muted">
               Step {post.publishStep}
               {post.attemptCount > 0 && ` · ${post.attemptCount} retr${post.attemptCount === 1 ? "y" : "ies"}`}
+              {tt && ` · TikTok: ${describeSettings(tt)}${post.igContainerId ? ` · publish id ${post.igContainerId}` : ""}`}
               {post.media[0] && ` · image ${post.media[0].asset.originalName} (${post.media[0].rendition.fit})`}
             </p>
           </section>
@@ -186,7 +213,7 @@ export default async function PostPage({
           <PhonePreview type={post.type} imageUrl={img} caption={post.caption} handle={post.brand.igHandle ?? post.brand.name} />
           {img && (
             <a href={img} target="_blank" rel="noreferrer" className="mt-3 block text-center text-xs text-muted hover:text-zinc-300">
-              Open the exact JPEG Instagram receives
+              Open the exact file {platformLabel(post.platform)} receives
             </a>
           )}
         </div>

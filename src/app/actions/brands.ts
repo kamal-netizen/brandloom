@@ -9,6 +9,7 @@ import { bindPage, ConnectError, openPick, PICK_COOKIE } from "@/lib/meta/connec
 import { pagesWithInstagram } from "@/lib/meta/oauth";
 import { GraphError } from "@/lib/meta/graph";
 import { refreshRights } from "@/lib/meta/rights";
+import { disconnectTiktok } from "@/lib/tiktok/connections";
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -101,4 +102,13 @@ export async function checkRightsAction(f: FormData) {
   const brand = await db.brand.findUniqueOrThrow({ where: { slug }, include: { connection: true } });
   if (brand.connection) await refreshRights(brand.connection);
   redirect(`/brands/${slug}?ok=${encodeURIComponent("Publishing rights checked.")}`);
+}
+
+/** Revokes the TikTok login and erases its tokens. */
+export async function disconnectTiktokAction(f: FormData) {
+  await assertAdmin();
+  const slug = str(f, "slug");
+  const brand = await db.brand.findUniqueOrThrow({ where: { slug } });
+  await disconnectTiktok(brand.id);
+  redirect(`/brands/${slug}?ok=${encodeURIComponent("TikTok disconnected; its tokens are erased.")}#tiktok`);
 }

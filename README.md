@@ -11,7 +11,8 @@ Muscle Rulz, Scoops Monster and ProScience Nutra — on one calendar.
 - **Automation in, approval out**: captions are written outside the app (in a
   Claude Code chat) and pushed with the `brandloom` CLI or `/api/v1`. Everything
   pushed lands in **Approvals**; nothing reaches Instagram until a person approves it.
-- Publishes through Meta's official Instagram Graph API (Facebook Login for Business).
+- Publishes through Meta's official Instagram Graph API (Facebook Login for Business), and
+  reels to TikTok through TikTok's Login Kit + Content Posting API (Direct Post).
 
 ## Stack
 
@@ -26,6 +27,7 @@ sharp. Deployed on Shipyard like the shop apps; conventions copied from
 | `scripts/boot.mjs` | Container entrypoint: `next start` + a tick every ~30 s |
 | `src/lib/posts.ts` | Status rules / approval gate shared by UI and API |
 | `src/lib/meta/*` | Graph client, OAuth, connection binding |
+| `src/lib/tiktok/*` | TikTok Open API client, Login Kit (state + PKCE), token refresh, per-post settings |
 | `src/lib/ingest.ts`, `renditions.ts`, `media-store.ts` | Uploads, Instagram JPEGs, storage |
 | `src/app/api/v1/*` | Token API (CLI) |
 | `bin/brandloom.mjs` | Zero-dependency CLI |
@@ -88,6 +90,12 @@ Reels: `--type reel --file reel.mp4` (MP4 or MOV, vertical 9:16, 3 s – 15 min,
 is published byte-for-byte — no transcode — so make it to spec (H.264 + AAC, 1080×1920, 30 fps).
 Instagram processes the video for a minute or two; the post shows *Scheduled* until it is live.
 
+TikTok: add `tiktok` to `--platforms` for a reel (`--platforms instagram,tiktok`). Optional
+`--tiktok-privacy self|friends|followers|public`, `--tiktok-allow comment,duet,stitch`,
+`--tiktok-disclosure none|yourbrand|branded|both`. While `TIKTOK_PRIVATE_ONLY` is on every
+TikTok post is private (Only me). The API takes the same fields as `tiktokPrivacy`,
+`tiktokAllow`, `tiktokDisclosure`.
+
 Times without an offset are Dubai time. Repeating a `post` with the same inputs
 returns the same post. Images must be 4:5 (feed) or 9:16 (story) unless `--fit crop|pad`.
 Add `--json` for machine-readable output.
@@ -106,3 +114,6 @@ Add `--json` for machine-readable output.
 5. `pwsh -File scripts/set-admin.ps1` creates your live login.
 6. Meta: follow [docs/META_SETUP.md](docs/META_SETUP.md), paste `META_APP_ID`,
    `META_APP_SECRET`, `META_CONFIG_ID`, redeploy, then **Connect** each brand.
+7. TikTok: follow [docs/TIKTOK_SETUP.md](docs/TIKTOK_SETUP.md), paste `TIKTOK_CLIENT_KEY`,
+   `TIKTOK_CLIENT_SECRET` (sandbox first), keep `TIKTOK_PRIVATE_ONLY=1` until TikTok approves
+   the app, redeploy, then **Connect TikTok** on each brand page.

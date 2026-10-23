@@ -4,6 +4,7 @@ import { CaretLeft, CaretRight } from "@phosphor-icons/react/dist/ssr";
 import { db } from "@/lib/db";
 import { BrandDot, brandColor, cn, PageHeader, StatusBadge } from "@/components/ui";
 import { dubaiDayKey, dubaiMidnight, formatDubai, formatDubaiTime } from "@/lib/time";
+import { PLATFORM_SHORT, platformLabel, type Platform } from "@/lib/status";
 
 export const metadata: Metadata = { title: "Calendar" };
 
@@ -166,11 +167,11 @@ export default async function CalendarPage({
                       href={`/posts/${p.id}`}
                       className="block truncate rounded-md border-l-2 bg-panel-2 px-1.5 py-1 hover:bg-zinc-800"
                       style={{ borderLeftColor: brandColor(p.brand) }}
-                      title={`${p.brand.name} · ${p.type} · ${p.status}`}
+                      title={`${p.brand.name} · ${platformLabel(p.platform)} ${p.type} · ${p.status}${p.platform === "TIKTOK" && p.status !== "PUBLISHED" && p.lastError ? ` · ${p.lastError}` : ""}`}
                     >
                       <span className="text-muted">{formatDubaiTime(p.publishedAt ?? p.scheduledAt!)}</span>{" "}
                       <span className="font-medium text-zinc-200">
-                        {p.platform === "FACEBOOK" ? "FB" : "IG"} {p.type === "STORY" ? "story" : "post"}
+                        {PLATFORM_SHORT[p.platform as Platform] ?? p.platform} {p.type === "STORY" ? "story" : p.type === "REEL" ? "reel" : "post"}
                       </span>{" "}
                       <span className="text-zinc-400">{p.brand.name}</span>
                       <span
@@ -201,7 +202,7 @@ export default async function CalendarPage({
               <Link key={p.id} href={`/posts/${p.id}`} className="card flex items-center gap-3 px-3 py-2.5 text-sm hover:border-zinc-500">
                 <BrandDot color={brandColor(p.brand)} />
                 <span className="truncate">
-                  {p.brand.name} · {p.type === "STORY" ? "Story" : "Post"} · <span className="text-muted">{p.caption.slice(0, 40) || "no caption"}</span>
+                  {p.brand.name} · {platformLabel(p.platform)} {p.type === "STORY" ? "story" : p.type === "REEL" ? "reel" : "post"} · <span className="text-muted">{p.caption.slice(0, 40) || "no caption"}</span>
                 </span>
                 <span className="ml-auto">
                   <StatusBadge status={p.status} />

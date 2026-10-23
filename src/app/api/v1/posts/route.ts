@@ -7,12 +7,18 @@ import { createPost, PostError } from "@/lib/posts";
 import { FITS, type Fit } from "@/lib/renditions";
 import { isPostStatus, PLATFORMS, type Platform } from "@/lib/status";
 import { parseDubai } from "@/lib/time";
+import { DEFAULT_SETTINGS, PRIVACY_ALIASES, PRIVACY_LEVELS, tiktokPrivateOnly, type TiktokSettings } from "@/lib/tiktok/settings";
+import type { PrivacyLevel } from "@/lib/tiktok/api";
 
 /**
  * POST /api/v1/posts  (multipart/form-data)
  *   brand        slug (required)
  *   type         feed | story | reel (required; a reel takes one MP4/MOV video, 9:16, 3 s–15 min, ≤ 300 MB)
- *   platforms    instagram (default) | facebook | instagram,facebook — one post per platform
+ *   platforms    instagram (default) | facebook | tiktok, comma-separated — one post per platform (tiktok: reels only)
+ *   tiktokPrivacy    self | friends | followers | public (TikTok's own names work too). While
+ *                    TIKTOK_PRIVATE_ONLY is on (until the TikTok app passes review) only self, the default.
+ *   tiktokAllow      comment,duet,stitch — interactions to allow (default none)
+ *   tiktokDisclosure none (default) | yourbrand | branded | both — commercial content
  *   caption      text, or a file part named caption
  *   files[]      one image   — or —   assetIds  an existing asset id
  *   hashtagSet   set name or "default" (appended to the caption)
@@ -54,8 +60,10 @@ export async function POST(req: Request) {
     const externalRef = (req.headers.get("idempotency-key") ?? str("externalRef")).slice(0, 190) || null;
     const platforms = [...new Set((str("platforms") || "instagram").toUpperCase().split(",").map((p) => p.trim()).filter(Boolean))];
     if (!platforms.length || !platforms.every((p): p is Platform => (PLATFORMS as readonly string[]).includes(p))) {
-      throw new ApiError(400, "invalid", "platforms must be instagram, facebook or instagram,facebook.");
+      throw new ApiError(400, "invalid", "platforms must be instagram, facebook and/or tiktok, comma-separated.");
     }
+    if (platforms.includes("TIKTOK") && type !== "REEL") throw new ApiError(400, "invalid", "TikTok takes videos only: use type reel.");
+    const tiktok = platforms.includes("TIKTOK") ? tiktokSettings(str) : undefined;
 
     let assetIds = form
       .getAll("assetIds")
@@ -85,6 +93,7 @@ export async function POST(req: Request) {
         brand,
         type,
         platform,
+        tiktok: platform === "TIKTOK" ? tiktok : undefined,
         caption,
         hashtagSet: str("hashtagSet") || undefined,
         assetIds,
@@ -109,6 +118,25 @@ export async function POST(req: Request) {
     if (err instanceof PostError) return apiErrorResponse(new ApiError(err.status, err.code, err.message));
     return apiErrorResponse(err);
   }
+}
+
+function tiktokSettings(str: (k: string) => string): TiktokSettings {
+  const raw = str("tiktokPrivacy");
+  const privacy = (PRIVACY_ALIASES[raw.toLowerCase()] ?? (PRIVACY_LEVELS.includes(raw.toUpperCase() as PrivacyLevel) ? raw.toUpperCase() : null)) as PrivacyLevel | null;
+  if (raw && !privacy) throw new ApiError(400, "invalid", "tiktokPrivacy must be self, friends, followers or public.");
+  const allow = str("tiktokAllow").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
+  if (allow.some((a) => !["comment", "duet", "stitch"].includes(a))) throw new ApiError(400, "invalid", "tiktokAllow takes comment, duet, stitch.");
+  const disclosure = str("tiktokDisclosure").toLowerCase() || "none";
+  if (!["none", "yourbrand", "branded", "both"].includes(disclosure)) throw new ApiError(400, "invalid", "tiktokDisclosure must be none, yourbrand, branded or both.");
+  return {
+    ...DEFAULT_SETTINGS,
+    privacy: privacy ?? (tiktokPrivateOnly() ? "SELF_ONLY" : null),
+    allowComment: allow.includes("comment"),
+    allowDuet: allow.includes("duet"),
+    allowStitch: allow.includes("stitch"),
+    yourBrand: disclosure === "yourbrand" || disclosure === "both",
+    brandedContent: disclosure === "branded" || disclosure === "both",
+  };
 }
 
 /** GET /api/v1/posts?brand=&status=&from=&to=&limit=&cursor= */

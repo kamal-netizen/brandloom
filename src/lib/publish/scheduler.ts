@@ -3,6 +3,7 @@ import { decrypt, encrypt } from "@/lib/crypto";
 import { refreshIgToken } from "@/lib/meta/ig-oauth";
 import { inspectToken, metaConfigured } from "@/lib/meta/oauth";
 import { refreshRights } from "@/lib/meta/rights";
+import { tiktokTokenHealth } from "@/lib/tiktok/connections";
 import { advance, claimDue, INSTANCE, recoverStale, type AdvanceResult, type EngineDeps } from "./engine";
 
 /**
@@ -15,13 +16,18 @@ let running = false;
 const HEALTH_EVERY_MS = 24 * 60 * 60_000;
 const RECONNECT_WARN_MS = 14 * 24 * 60 * 60_000;
 
-export type TickResult = { skipped?: true; recovered: number; results: Record<string, AdvanceResult>; health: number };
+export type TickResult = { skipped?: true; recovered: number; results: Record<string, AdvanceResult>; health: number; tiktok?: number };
 
 export async function tick(deps: EngineDeps = {}): Promise<TickResult> {
   if (running) return { skipped: true, recovered: 0, results: {}, health: 0 };
   running = true;
   const instance = deps.instance ?? INSTANCE;
   try {
+    // TikTok access tokens last 24 h: renewed ahead of the posts that need them.
+    const tiktok = await tiktokTokenHealth().catch((err) => {
+      console.error(`[scheduler] TikTok token refresh failed — ${err.message}`);
+      return 0;
+    });
     const recovered = await recoverStale();
     const ids = await claimDue(instance, 3);
     const results: Record<string, AdvanceResult> = {};
@@ -30,7 +36,7 @@ export async function tick(deps: EngineDeps = {}): Promise<TickResult> {
       console.error(`[scheduler] token health failed — ${err.message}`);
       return 0;
     });
-    const summary = { recovered, results, health };
+    const summary = { recovered, results, health, tiktok };
     await db.schedulerHeartbeat.upsert({
       where: { id: "main" },
       create: { id: "main", lastTickAt: new Date(), lastTickBy: instance, lastResult: JSON.stringify(summary).slice(0, 2000) },

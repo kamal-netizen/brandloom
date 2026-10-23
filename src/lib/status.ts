@@ -21,9 +21,17 @@ export type PostStatus = (typeof POST_STATUSES)[number];
 
 export const POST_TYPES = ["FEED", "STORY", "REEL"] as const; // CAROUSEL: later phase
 
-export const PLATFORMS = ["INSTAGRAM", "FACEBOOK"] as const;
+export const PLATFORMS = ["INSTAGRAM", "FACEBOOK", "TIKTOK"] as const;
 export type Platform = (typeof PLATFORMS)[number];
-export const PLATFORM_LABEL: Record<Platform, string> = { INSTAGRAM: "Instagram", FACEBOOK: "Facebook" };
+export const PLATFORM_LABEL: Record<Platform, string> = { INSTAGRAM: "Instagram", FACEBOOK: "Facebook", TIKTOK: "TikTok" };
+/** Calendar shorthand. */
+export const PLATFORM_SHORT: Record<Platform, string> = { INSTAGRAM: "IG", FACEBOOK: "FB", TIKTOK: "TT" };
+/** TikTok takes videos only (photo posts are a separate API this app does not use). */
+export const TIKTOK_TYPES: readonly string[] = ["REEL"];
+
+export function platformLabel(p: string): string {
+  return PLATFORM_LABEL[p as Platform] ?? p;
+}
 export type PostType = (typeof POST_TYPES)[number];
 
 export const PUBLISH_STEPS = ["NONE", "CONTAINER_CREATED", "CONTAINER_READY", "PUBLISH_CALLED", "DONE"] as const;

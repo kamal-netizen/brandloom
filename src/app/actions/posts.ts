@@ -8,6 +8,9 @@ import { approvePost, cancelPost, createPost, editPost, PostError, rejectPost, r
 import { publishNow } from "@/lib/publish/engine";
 import { FITS, type Fit } from "@/lib/renditions";
 import { parseDubai } from "@/lib/time";
+import { platformLabel, type Platform } from "@/lib/status";
+import { DEFAULT_SETTINGS, parseSettings, PRIVACY_LEVELS, type TiktokSettings } from "@/lib/tiktok/settings";
+import type { PrivacyLevel } from "@/lib/tiktok/api";
 
 export type ActionState = { error?: string; ok?: string } | null;
 
@@ -25,8 +28,8 @@ function message(err: unknown): string {
 /** After a publish-now: say what happened. */
 async function publishOutcome(id: string) {
   const r = await publishNow(id);
-  const p = await db.post.findUnique({ where: { id }, select: { status: true, lastError: true } });
-  if (r === "published") return "ok=" + encodeURIComponent("Published to Instagram.");
+  const p = await db.post.findUnique({ where: { id }, select: { status: true, lastError: true, platform: true } });
+  if (r === "published") return "ok=" + encodeURIComponent(`Published to ${platformLabel(p?.platform ?? "INSTAGRAM")}.`);
   if (p?.status === "FAILED") return "error=" + encodeURIComponent(p.lastError ?? "Publishing failed.");
   return "ok=" + encodeURIComponent("Queued: the scheduler will finish publishing within a minute.");
 }
@@ -37,9 +40,10 @@ export async function createPostAction(_prev: ActionState, f: FormData): Promise
   const intent = str(f, "intent");
   const brand = await db.brand.findUnique({ where: { slug: str(f, "brand") } });
   if (!brand) return { error: "Pick a brand." };
-  const type = str(f, "type") === "STORY" ? "STORY" : "FEED";
+  const rawType = str(f, "type");
+  const type = rawType === "STORY" ? "STORY" : rawType === "REEL" ? "REEL" : "FEED";
   const assetId = str(f, "assetId");
-  if (!assetId) return { error: "Add an image." };
+  if (!assetId) return { error: type === "REEL" ? "Add a video." : "Add an image." };
   const fit = (str(f, "fit") || "reject") as Fit;
   if (!FITS.includes(fit)) return { error: "Bad fit." };
 
@@ -51,8 +55,18 @@ export async function createPostAction(_prev: ActionState, f: FormData): Promise
     scheduledAt = parseDubai(str(f, "scheduledAt"));
   }
 
-  const platforms = f.getAll("platforms").map(String).filter((p): p is "INSTAGRAM" | "FACEBOOK" => p === "INSTAGRAM" || p === "FACEBOOK");
-  if (!platforms.length) return { error: "Pick Instagram, Facebook or both." };
+  const platforms = f.getAll("platforms").map(String).filter((p): p is Platform => p === "INSTAGRAM" || p === "FACEBOOK" || p === "TIKTOK");
+  if (!platforms.length) return { error: "Pick at least one of Instagram, Facebook and TikTok." };
+  const privacy = str(f, "ttPrivacy");
+  const tiktok: TiktokSettings = {
+    ...DEFAULT_SETTINGS,
+    privacy: PRIVACY_LEVELS.includes(privacy as PrivacyLevel) ? (privacy as PrivacyLevel) : null,
+    allowComment: str(f, "ttComment") === "1",
+    allowDuet: str(f, "ttDuet") === "1",
+    allowStitch: str(f, "ttStitch") === "1",
+    yourBrand: str(f, "ttYourBrand") === "1",
+    brandedContent: str(f, "ttBranded") === "1",
+  };
 
   const ids: string[] = [];
   try {
@@ -61,6 +75,7 @@ export async function createPostAction(_prev: ActionState, f: FormData): Promise
       brand,
       type,
       platform,
+      tiktok: platform === "TIKTOK" ? tiktok : undefined,
       caption: str(f, "caption"),
       assetIds: [assetId],
       fit,
@@ -84,7 +99,8 @@ export async function createPostAction(_prev: ActionState, f: FormData): Promise
     redirect(`/posts/${id}?${outcomes[0]}`);
   }
   const what = intent === "draft" ? "Draft saved" : "Scheduled";
-  redirect(`/posts/${id}?ok=${encodeURIComponent(ids.length > 1 ? `${what} for Instagram and Facebook (two posts).` : `${what}.`)}`);
+  const names = platforms.map(platformLabel);
+  redirect(`/posts/${id}?ok=${encodeURIComponent(ids.length > 1 ? `${what} for ${names.slice(0, -1).join(", ")} and ${names.at(-1)} (${ids.length} posts).` : `${what}.`)}`);
 }
 
 export async function approveAction(f: FormData) {
@@ -161,7 +177,14 @@ export async function editPostAction(f: FormData) {
     const raw = str(f, "scheduledAt");
     const at = raw ? parseDubai(raw) : null;
     if (raw && !at) throw new PostError("Bad date.");
-    await editPost(id, { caption: str(f, "caption"), scheduledAt: at }, { canApprove: true });
+    const privacy = str(f, "ttPrivacy");
+    let tiktok: TiktokSettings | undefined;
+    if (privacy) {
+      const post = await db.post.findUnique({ where: { id }, select: { tiktokJson: true } });
+      if (!PRIVACY_LEVELS.includes(privacy as PrivacyLevel)) throw new PostError("Bad TikTok privacy.");
+      tiktok = { ...parseSettings(post?.tiktokJson ?? ""), privacy: privacy as PrivacyLevel };
+    }
+    await editPost(id, { caption: str(f, "caption"), scheduledAt: at, tiktok }, { canApprove: true });
   } catch (err) {
     q = "error=" + encodeURIComponent(message(err));
   }

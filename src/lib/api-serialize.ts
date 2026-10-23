@@ -1,5 +1,6 @@
 import type { Brand, Post, PostMedia, Rendition } from "@prisma/client";
 import { publicUrl } from "@/lib/media-store";
+import { parseSettings } from "@/lib/tiktok/settings";
 
 type PostWithMedia = Post & { brand?: Pick<Brand, "slug">; media?: (PostMedia & { rendition: Rendition })[] };
 
@@ -21,6 +22,7 @@ export function serializePost(p: PostWithMedia) {
     rejectNote: p.rejectNote,
     publishedAt: p.publishedAt?.toISOString() ?? null,
     permalink: p.igPermalink,
+    ...(p.platform === "TIKTOK" ? { tiktok: { ...parseSettings(p.tiktokJson), publishId: p.igContainerId, step: p.publishStep.toLowerCase() } } : {}),
     lastError: p.lastError,
     media: (p.media ?? []).map((m) => ({ assetId: m.assetId, url: publicUrl(m.rendition.key), width: m.rendition.width, height: m.rendition.height })),
     reviewUrl: `${app}/posts/${p.id}`,

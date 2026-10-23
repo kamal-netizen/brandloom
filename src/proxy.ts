@@ -7,13 +7,13 @@ import { getSessionCookie } from "better-auth/cookies";
  * spares anonymous visitors the render.
  *
  * Open without a session:
- *  - /login, /privacy, /data-deletion (Meta requires the last two to be public)
- *  - /api/auth (Better Auth), /api/meta/callback + ig-callback (Facebook / Instagram redirect here)
+ *  - /login, /privacy, /terms, /data-deletion (Meta and TikTok require these to be public)
+ *  - /api/auth (Better Auth), /api/meta/callback + ig-callback (Facebook / Instagram redirect here), /api/tiktok/callback
  *  - /m and /api/media: renditions Instagram downloads anonymously
  *  - /api/v1: bearer-token API, authenticated in the handler
  *  - /api/internal/tick: scheduler secret, checked in the handler
  */
-const OPEN = ["/login", "/privacy", "/data-deletion", "/api/auth", "/api/meta/callback", "/api/meta/ig-callback", "/m", "/api/media", "/api/v1", "/api/internal"];
+const OPEN = ["/login", "/privacy", "/terms", "/data-deletion", "/api/auth", "/api/meta/callback", "/api/meta/ig-callback", "/api/tiktok/callback", "/m", "/api/media", "/api/v1", "/api/internal"];
 
 /** Shipyard's deploy health check addresses the container by name; let it through to get a real answer. */
 const SHIPYARD_PROBE_HOST = /^site-[a-z0-9-]+-[0-9a-f]{12}-\d+(:\d+)?$/;

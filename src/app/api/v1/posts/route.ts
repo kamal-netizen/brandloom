@@ -21,6 +21,8 @@ import type { PrivacyLevel } from "@/lib/tiktok/api";
  *   tiktokDisclosure none (default) | yourbrand | branded | both — commercial content
  *   caption      text, or a file part named caption
  *   files[]      one image   — or —   assetIds  an existing asset id
+ *   cover        reels only: a 9:16 JPEG/PNG file used as the reel's cover (Instagram cover_url, Facebook
+ *                thumbnail; TikTok ignores it)   — or —   coverAssetId  an existing image asset id
  *   hashtagSet   set name or "default" (appended to the caption)
  *   scheduledAt  ISO-8601; without an offset it is Dubai time
  *   publishNow   true → publish as soon as approved
@@ -85,6 +87,19 @@ export async function POST(req: Request) {
       }
     }
 
+    let coverAssetId = str("coverAssetId") || null;
+    const coverFile = form.get("cover");
+    if (coverFile instanceof File) {
+      if (type !== "REEL") throw new ApiError(400, "invalid", "Only a reel takes a cover image.");
+      if (!hasScope(token, "assets:write")) throw new ApiError(403, "forbidden", "Uploading files needs the assets:write scope.");
+      try {
+        coverAssetId = (await saveAsset(brand, Buffer.from(await coverFile.arrayBuffer()), coverFile.name, coverFile.type, "API")).asset.id;
+      } catch (err) {
+        if (err instanceof IngestError) throw new ApiError(err.status, "media", `${coverFile.name}: ${err.message}`);
+        throw err;
+      }
+    }
+
     const results = [];
     for (const platform of platforms as Platform[]) {
       // Instagram keeps the bare key, so repeats of older single-platform calls still match.
@@ -97,6 +112,7 @@ export async function POST(req: Request) {
         caption,
         hashtagSet: str("hashtagSet") || undefined,
         assetIds,
+        coverAssetId,
         fit,
         scheduledAt,
         publishNow,
@@ -108,7 +124,7 @@ export async function POST(req: Request) {
       });
       const full = await db.post.findUniqueOrThrow({
         where: { id: post.id },
-        include: { brand: { select: { slug: true } }, media: { include: { rendition: true } } },
+        include: { brand: { select: { slug: true } }, media: { include: { rendition: true }, orderBy: { position: "asc" } } },
       });
       results.push({ post: serializePost(full), created });
     }
@@ -160,7 +176,7 @@ export async function GET(req: Request) {
 
     const posts = await db.post.findMany({
       where,
-      include: { brand: { select: { slug: true } }, media: { include: { rendition: true } } },
+      include: { brand: { select: { slug: true } }, media: { include: { rendition: true }, orderBy: { position: "asc" } } },
       orderBy: [{ scheduledAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }, { id: "asc" }],
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),

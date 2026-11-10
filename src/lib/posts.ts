@@ -33,6 +33,8 @@ export type CreatePostInput = {
   caption: string;
   hashtagSet?: string; // a set name, or "default"
   assetIds: string[];
+  /** Reels only: an image asset (9:16) used as the reel's cover on Instagram and its thumbnail on Facebook. */
+  coverAssetId?: string | null;
   fit?: Fit;
   scheduledAt?: Date | null;
   publishNow?: boolean;
@@ -86,6 +88,7 @@ export async function createPost(input: CreatePostInput): Promise<{ post: Post; 
     if (existing) return { post: existing, created: false };
   }
   if (input.assetIds.length !== 1) throw new PostError("Feed and story posts take exactly one image.");
+  if (input.coverAssetId && input.type !== "REEL") throw new PostError("Only a reel takes a cover image.");
 
   const caption = await resolveCaption(brand.id, input.caption ?? "", input.hashtagSet);
   const check = checkCaption(caption);
@@ -118,6 +121,20 @@ export async function createPost(input: CreatePostInput): Promise<{ post: Post; 
     throw err;
   }
 
+  let cover: { assetId: string; renditionId: string; position: number } | null = null;
+  if (input.coverAssetId && input.platform !== "TIKTOK") {
+    const coverAsset = await db.asset.findFirst({ where: { id: input.coverAssetId, brandId: brand.id } });
+    if (!coverAsset) throw new PostError("Cover image not found for this brand.", 404, "not_found");
+    if (coverAsset.kind === "VIDEO") throw new PostError("The cover must be an image (JPEG/PNG), not a video.");
+    try {
+      const r = await ensureRendition(coverAsset, brand, "STORY_9x16", input.fit ?? "reject");
+      cover = { assetId: coverAsset.id, renditionId: r.id, position: 1 };
+    } catch (err) {
+      if (err instanceof IngestError) throw new PostError(`Cover: ${err.message}`, err.status, "media");
+      throw err;
+    }
+  }
+
   try {
     const post = await db.post.create({
       data: {
@@ -136,7 +153,7 @@ export async function createPost(input: CreatePostInput): Promise<{ post: Post; 
         ...(status === "SCHEDULED" && input.createdByUserId
           ? { approvedByUserId: input.createdByUserId, approvedAt: new Date() }
           : {}),
-        media: { create: [{ assetId: asset.id, renditionId: rendition.id, position: 0 }] },
+        media: { create: [{ assetId: asset.id, renditionId: rendition.id, position: 0 }, ...(cover ? [cover] : [])] },
       },
     });
     return { post, created: true };

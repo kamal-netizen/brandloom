@@ -32,7 +32,7 @@ export default async function PostPage({
     where: { id },
     include: {
       brand: { include: { connection: true, tiktok: true } },
-      media: { include: { rendition: true, asset: true } },
+      media: { include: { rendition: true, asset: true }, orderBy: { position: "asc" } },
       attempts: { orderBy: { startedAt: "desc" }, take: 30 },
     },
   });

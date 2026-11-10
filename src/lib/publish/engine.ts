@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { Prisma, type TiktokConnection } from "@prisma/client";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
-import { mediaOnDisk, mediaType, publicUrl } from "@/lib/media-store";
+import { mediaOnDisk, mediaType, publicUrl, readMedia } from "@/lib/media-store";
 import { graphFor, GraphError, type Graph } from "@/lib/meta/graph";
 import { chunkPlan, tiktok as tiktokApi, TiktokError, type Tiktok } from "@/lib/tiktok/api";
 import { tiktokAccessToken } from "@/lib/tiktok/connections";
@@ -275,13 +275,15 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
   }
   const token = decrypt(conn.pageTokenEnc);
   const story = post.type === "STORY";
+  // A reel may carry a cover image as its second media (position 1): Instagram's cover_url, Facebook's thumbnail.
+  const cover = post.type === "REEL" ? post.media.find((m) => m.position === 1 && m.rendition.key !== media.rendition.key) : undefined;
 
   if (post.platform === "FACEBOOK") {
     if (conn.loginType !== "FACEBOOK" || !conn.fbPageId) {
       await fail(c, post.id, `${post.brand.name} has no Facebook Page connected (it is connected through Instagram login), so it cannot post to Facebook.`);
       return "failed";
     }
-    if (post.type === "REEL") return runFacebookReel(c, post, conn.fbPageId, token, publicUrl(media.rendition.key), c.graph ?? graphFor(conn));
+    if (post.type === "REEL") return runFacebookReel(c, post, conn.fbPageId, token, publicUrl(media.rendition.key), c.graph ?? graphFor(conn), cover?.rendition.key);
     return runFacebook(c, post, conn.fbPageId, token, publicUrl(media.rendition.key), story, c.graph ?? graphFor(conn));
   }
 
@@ -295,7 +297,12 @@ async function run(c: Ctx, postId: string): Promise<AdvanceResult> {
     if (step === "NONE") {
       const id = await logged(c, post.id, "CREATE_CONTAINER", () =>
         post.type === "REEL"
-          ? api.createReelContainer(ig, token, { videoUrl: publicUrl(media.rendition.key), caption: post.caption, shareToFeed: true })
+          ? api.createReelContainer(ig, token, {
+              videoUrl: publicUrl(media.rendition.key),
+              caption: post.caption,
+              shareToFeed: true,
+              coverUrl: cover ? publicUrl(cover.rendition.key) : undefined,
+            })
           : api.createImageContainer(ig, token, { imageUrl: publicUrl(media.rendition.key), caption: post.caption, story })
       );
       await owned(c, post.id, { igContainerId: id, publishStep: "CONTAINER_CREATED" });
@@ -481,7 +488,8 @@ async function runFacebookReel(
   pageId: string,
   token: string,
   videoUrl: string,
-  api: Graph
+  api: Graph,
+  coverKey?: string
 ): Promise<AdvanceResult> {
   let step = post.publishStep;
   let videoId = post.igContainerId;
@@ -518,6 +526,15 @@ async function runFacebookReel(
     videoId = started.videoId;
     await owned(c, post.id, { igContainerId: videoId, publishStep: "CONTAINER_CREATED" });
     await logged(c, post.id, "FB_REEL_UPLOAD", () => api.fbReelUpload(started.uploadUrl, token, videoUrl), videoId);
+    if (coverKey) {
+      // A missing cover is not worth a failed reel: Facebook then picks a frame itself (the attempt log keeps the error).
+      try {
+        const bytes = await readMedia(coverKey);
+        if (bytes) await logged(c, post.id, "FB_REEL_THUMBNAIL", () => api.fbReelThumbnail(videoId!, token, { bytes, name: "cover.jpg" }), videoId);
+      } catch {
+        /* logged above */
+      }
+    }
     await owned(c, post.id, { publishStep: "CONTAINER_READY" });
   }
 

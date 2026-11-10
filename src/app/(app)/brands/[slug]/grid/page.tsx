@@ -17,7 +17,7 @@ export default async function GridPage({ params }: { params: Promise<{ slug: str
   if (!brand) notFound();
   const posts = await db.post.findMany({
     where: { brandId: brand.id, type: "FEED", status: { in: ["PENDING_APPROVAL", "SCHEDULED", "PUBLISHING", "PUBLISHED"] } },
-    include: { media: { include: { rendition: true } } },
+    include: { media: { include: { rendition: true }, orderBy: { position: "asc" } } },
     orderBy: [{ publishedAt: { sort: "desc", nulls: "first" } }, { scheduledAt: { sort: "desc", nulls: "first" } }],
     take: 30,
   });

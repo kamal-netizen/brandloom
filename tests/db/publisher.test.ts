@@ -232,6 +232,17 @@ describe("Facebook Page publishing", () => {
 });
 
 describe("reels", () => {
+  async function withCover(postId: string, brandId: string) {
+    const asset = await db.asset.create({
+      data: { brandId, kind: "IMAGE", originalKey: `m/x/${Math.random()}/cover.jpg`, originalName: "cover.jpg", mime: "image/jpeg", bytes: 1, width: 1080, height: 1920, sha256: String(Math.random()) },
+    });
+    const rendition = await db.rendition.create({
+      data: { assetId: asset.id, purpose: "STORY_9x16", key: `m/x/${Math.random()}/story_9x16.jpg`, width: 1080, height: 1920, bytes: 1 },
+    });
+    await db.postMedia.create({ data: { postId, assetId: asset.id, renditionId: rendition.id, position: 1 } });
+    return rendition.key;
+  }
+
   async function dueReel(brandId: string, extra: Record<string, unknown> = {}) {
     const asset = await db.asset.create({
       data: { brandId, kind: "VIDEO", originalKey: `m/x/${Math.random()}/reel.mp4`, originalName: "reel.mp4", mime: "video/mp4", bytes: 1, width: 1080, height: 1920, sha256: String(Math.random()) },
@@ -285,5 +296,37 @@ describe("reels", () => {
     expect(row.igPermalink).toMatch(/facebook\.com\/reel\//);
     expect([ig.calls.fbReelStart, ig.calls.fbReelUpload, ig.calls.fbReelFinish]).toEqual([1, 1, 1]);
     expect([...ig.fbReels.values()][0].description).toBe("Cracked. Churned. Chilled.");
+  });
+
+  it("sends the reel's cover image as Instagram's cover_url", async () => {
+    const brand = await brandWithConnection();
+    const post = await dueReel(brand.id);
+    const key = await withCover(post.id, brand.id);
+    const ig = fakeGraph();
+    expect((await tick({ graph: ig.graph, instance: "t", sleep: noSleep })).results[post.id]).toBe("published");
+    expect(ig.reelCovers).toHaveLength(1);
+    expect(ig.reelCovers[0]).toContain(key);
+  });
+
+  it("a reel without a cover sends no cover_url", async () => {
+    const brand = await brandWithConnection();
+    await dueReel(brand.id);
+    const ig = fakeGraph();
+    await tick({ graph: ig.graph, instance: "t", sleep: noSleep });
+    expect(ig.reelCovers).toEqual([undefined]);
+  });
+
+  it("a Facebook reel whose cover file is missing still publishes (Facebook picks a frame)", async () => {
+    const brand = await brandWithConnection();
+    const post = await dueReel(brand.id, { platform: "FACEBOOK" });
+    await withCover(post.id, brand.id); // no file behind the key in storage
+    const ig = fakeGraph();
+    for (let i = 0; i < 3; i++) {
+      await db.post.update({ where: { id: post.id }, data: { nextAttemptAt: null } });
+      await tick({ graph: ig.graph, instance: "t", sleep: noSleep });
+    }
+    const row = await db.post.findUniqueOrThrow({ where: { id: post.id } });
+    expect(row.status).toBe("PUBLISHED");
+    expect(ig.calls.fbReelThumbnail).toBe(0);
   });
 });

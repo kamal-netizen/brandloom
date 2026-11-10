@@ -77,8 +77,9 @@ export type ContainerStatus = "EXPIRED" | "ERROR" | "FINISHED" | "IN_PROGRESS" |
 /** The Instagram operations the publisher needs. */
 export interface Graph {
   createImageContainer(igUserId: string, token: string, args: { imageUrl: string; caption?: string; story?: boolean }): Promise<string>;
-  /** Instagram reel container (media_type=REELS). Video processing can take minutes: poll containerStatus. */
-  createReelContainer(igUserId: string, token: string, args: { videoUrl: string; caption?: string; shareToFeed: boolean }): Promise<string>;
+  /** Instagram reel container (media_type=REELS). Video processing can take minutes: poll containerStatus.
+   *  coverUrl: a public JPEG Instagram uses as the reel's cover (grid + feed) instead of a frame it picks. */
+  createReelContainer(igUserId: string, token: string, args: { videoUrl: string; caption?: string; shareToFeed: boolean; coverUrl?: string }): Promise<string>;
   containerStatus(containerId: string, token: string): Promise<{ status: ContainerStatus; detail?: string }>;
   publish(igUserId: string, token: string, containerId: string): Promise<string>;
   permalink(mediaId: string, token: string): Promise<string | null>;
@@ -98,6 +99,8 @@ export interface Graph {
   fbReelStart(pageId: string, token: string): Promise<{ videoId: string; uploadUrl: string }>;
   fbReelUpload(uploadUrl: string, token: string, fileUrl: string): Promise<void>;
   fbReelFinish(pageId: string, token: string, videoId: string, description: string): Promise<void>;
+  /** Uploads a JPEG as the reel's preferred thumbnail (POST /{video-id}/thumbnails, multipart `source`). */
+  fbReelThumbnail(videoId: string, token: string, image: { bytes: Uint8Array; name: string }): Promise<void>;
   /** complete = published on the Page; processing = ask again later; error = Facebook rejected it. */
   fbReelStatus(videoId: string, token: string): Promise<{ state: "complete" | "processing" | "error"; detail?: string; permalink?: string }>;
 }
@@ -116,10 +119,11 @@ export function makeGraph(host: string): Graph {
     });
     return r.id;
   },
-  async createReelContainer(igUserId, token, { videoUrl, caption, shareToFeed }) {
+  async createReelContainer(igUserId, token, { videoUrl, caption, shareToFeed, coverUrl }) {
     const r = await call<{ id: string }>("POST", `${igUserId}/media`, {
       media_type: "REELS",
       video_url: videoUrl,
+      cover_url: coverUrl,
       caption,
       share_to_feed: shareToFeed ? "true" : "false",
       access_token: token,
@@ -210,6 +214,23 @@ export function makeGraph(host: string): Graph {
       description,
       access_token: token,
     });
+  },
+  async fbReelThumbnail(videoId, token, image) {
+    const form = new FormData();
+    form.set("is_preferred", "true");
+    form.set("access_token", token);
+    form.set("source", new Blob([image.bytes as BlobPart], { type: "image/jpeg" }), image.name);
+    let res: Response;
+    try {
+      res = await fetch(`${host}/${GRAPH_VERSION}/${videoId}/thumbnails`, { method: "POST", body: form, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    } catch (err) {
+      throw new GraphError(`network: ${(err as Error).message}`, 0, -1);
+    }
+    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string } };
+    if (!res.ok || body.error) {
+      const e = body.error ?? {};
+      throw new GraphError(e.message ?? `HTTP ${res.status}`, res.status, e.code ?? -1, e.error_subcode, e.error_user_msg);
+    }
   },
   async fbReelStatus(videoId, token) {
     const r = await call<{

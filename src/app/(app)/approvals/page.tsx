@@ -16,7 +16,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const posts = await db.post.findMany({
     where: { status: "PENDING_APPROVAL" },
-    include: { brand: { include: { connection: true } }, media: { include: { rendition: true } } },
+    include: { brand: { include: { connection: true } }, media: { include: { rendition: true }, orderBy: { position: "asc" } } },
     orderBy: [{ scheduledAt: { sort: "asc", nulls: "first" } }, { createdAt: "asc" }],
   });
   const now = requestNow();

@@ -11,7 +11,7 @@ async function full(id: string) {
     where: { id },
     include: {
       brand: { select: { slug: true } },
-      media: { include: { rendition: true } },
+      media: { include: { rendition: true }, orderBy: { position: "asc" } },
       attempts: { orderBy: { startedAt: "desc" }, take: 20 },
     },
   });

@@ -6,7 +6,8 @@
  *
  *   brandloom whoami
  *   brandloom brands
- *   brandloom post --brand corechamps --type feed|story|reel --file poster.jpg|reel.mp4
+ *   brandloom post --brand corechamps --type feed|story|reel --file poster.jpg|reel.mp4 [--cover cover.jpg]
+ *                  (--cover: reels only, a 9:16 image for the Instagram cover / Facebook thumbnail)
  *                  (--caption "…" | --caption-file caption.txt) [--hashtags default|<set>]
  *                  [--platforms instagram|facebook|tiktok, comma-separated]   (default instagram; tiktok = reels only)
  *                  [--tiktok-privacy self|friends|followers|public] [--tiktok-allow comment,duet,stitch]
@@ -145,6 +146,17 @@ async function cmdPost(opt) {
   // Platforms are not in the key: the server suffixes it per platform, so adding
   // facebook to a command that already ran for instagram creates only the new one.
   const hash = createHash("sha256").update(`${opt.brand}\n${type}\n${caption}\n${opt.at ?? ""}\n${opt.now ? "now" : ""}\n`);
+  if (opt.cover) {
+    if (type !== "reel") throw new CliError("--cover is for reels only");
+    const mime = MIME[path.extname(String(opt.cover)).toLowerCase()];
+    if (!mime || mime.startsWith("video/")) throw new CliError(`${opt.cover}: the cover must be a .jpg, .jpeg, .png or .webp image`);
+    try {
+      hash.update(await readFile(opt.cover));
+    } catch {
+      throw new CliError(`${opt.cover}: cannot read file`);
+    }
+    form.set("cover", new File([await openAsBlob(opt.cover)], path.basename(opt.cover), { type: mime }));
+  }
   for (const f of files) {
     const mime = MIME[path.extname(f).toLowerCase()];
     if (!mime) throw new CliError(`${f}: only .png, .jpg, .jpeg, .webp (or .mp4 / .mov for a reel)`);

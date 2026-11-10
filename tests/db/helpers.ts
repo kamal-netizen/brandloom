@@ -52,7 +52,9 @@ export async function duePost(brandId: string, extra: Record<string, unknown> = 
 export function fakeGraph() {
   const containers = new Map<string, { status: ContainerStatus; caption?: string }>();
   const media: { id: string; timestamp: string; permalink: string; container: string }[] = [];
-  const calls = { create: 0, status: 0, publish: 0, fbPhoto: 0, fbStory: 0, reel: 0, fbReelStart: 0, fbReelUpload: 0, fbReelFinish: 0, fbReelStatus: 0 };
+  const calls = { create: 0, status: 0, publish: 0, fbPhoto: 0, fbStory: 0, reel: 0, fbReelStart: 0, fbReelUpload: 0, fbReelFinish: 0, fbReelStatus: 0, fbReelThumbnail: 0 };
+  /** The cover_url each reel container was created with. */
+  const reelCovers: (string | undefined)[] = [];
   /** How many status polls a new reel container / Facebook reel stays "processing" for. */
   let reelProcessingPolls = 0;
   const fbReels = new Map<string, { polls: number; finished: boolean; description?: string }>();
@@ -70,10 +72,11 @@ export function fakeGraph() {
       containers.set(id, { status: createStatus, caption });
       return id;
     },
-    async createReelContainer(_ig, token, { caption }) {
+    async createReelContainer(_ig, token, { caption, coverUrl }) {
       if (token !== "page-token") throw new GraphError("bad token", 400, 190);
       calls.create++;
       calls.reel++;
+      reelCovers.push(coverUrl);
       const id = `r${++seq}`;
       containers.set(id, { status: reelProcessingPolls ? "IN_PROGRESS" : "FINISHED", caption, pending: reelProcessingPolls } as never);
       return id;
@@ -142,6 +145,10 @@ export function fakeGraph() {
       r.finished = true;
       r.description = description;
     },
+    async fbReelThumbnail(videoId) {
+      calls.fbReelThumbnail++;
+      if (!fbReels.has(videoId)) throw new GraphError("unknown video", 400, 100);
+    },
     async fbReelStatus(videoId) {
       calls.fbReelStatus++;
       const r = fbReels.get(videoId)!;
@@ -157,6 +164,7 @@ export function fakeGraph() {
     containers,
     fbPosts,
     fbReels,
+    reelCovers,
     set reelProcessingPolls(v: number) {
       reelProcessingPolls = v;
     },
